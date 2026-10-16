@@ -85,6 +85,7 @@ func runDelegatesWithStdin(args []string, stdout, stderr io.Writer, getenv func(
 		flags.PrintDefaults()
 	}
 
+	configFlag := flags.String("config", "", "path to CLI configuration file (default $SOROAUTH_CONFIG or ~/.config/soroauth/config.json)")
 	entryFlag := flags.String("entry", "", "the authorization entry, as base64 XDR or -")
 	validUntil := flags.Uint("valid-until", 0, "the last ledger at which the signatures are valid")
 	validFor := flags.Uint64("valid-for", 0, "the signature lifetime in ledgers, resolved against the current ledger (needs --rpc-url)")
@@ -98,28 +99,39 @@ func runDelegatesWithStdin(args []string, stdout, stderr io.Writer, getenv func(
 		return newErrorf(ExitUsageError, "%w", err)
 	}
 
-	resolvedEntry, err := resolveEntryArg(*entryFlag, stdin)
+	set := visitedFlags(flags)
+	cfg, err := loadConfig(*configFlag, getenv)
+	if err != nil {
+		return writeJSONError(stdout, *jsonFlag, err)
+	}
+	jsonMode, err := resolveJSONMode(set, *jsonFlag, getenv, cfg)
 	if err != nil {
 		return writeJSONError(stdout, *jsonFlag, err)
 	}
 
+	resolvedEntry, err := resolveEntryArg(*entryFlag, stdin)
+	if err != nil {
+		return writeJSONError(stdout, jsonMode, err)
+	}
+
 	entry, err := decodeEntry(resolvedEntry)
 	if err != nil {
-		return writeJSONError(stdout, *jsonFlag, err)
+		return writeJSONError(stdout, jsonMode, err)
 	}
-	expiration, err := resolveValidUntil(context.Background(), uint64(*validUntil), *validFor, resolveRPCURL(*rpcURL, getenv), fetchLatestLedger)
+	resolvedRPC := resolveRPCURLValue(set, *rpcURL, getenv, cfg, "").Value
+	expiration, err := resolveValidUntil(context.Background(), uint64(*validUntil), *validFor, resolvedRPC, fetchLatestLedger)
 	if err != nil {
-		return writeJSONError(stdout, *jsonFlag, err)
+		return writeJSONError(stdout, jsonMode, err)
 	}
 
 	var tree []soroauth.Delegate
 	if *nestedJSONFlag != "" {
 		if err := json.Unmarshal([]byte(*nestedJSONFlag), &tree); err != nil {
-			return writeJSONError(stdout, *jsonFlag, newErrorf(ExitUsageError, "invalid --nested-json: %w", err))
+			return writeJSONError(stdout, jsonMode, newErrorf(ExitUsageError, "invalid --nested-json: %w", err))
 		}
 	} else {
 		if len(delegates) == 0 {
-			return writeJSONError(stdout, *jsonFlag, newErrorf(ExitUsageError, "at least one --delegate is required"))
+			return writeJSONError(stdout, jsonMode, newErrorf(ExitUsageError, "at least one --delegate is required"))
 		}
 		tree = make([]soroauth.Delegate, 0, len(delegates))
 		for _, address := range delegates {
@@ -140,15 +152,15 @@ func runDelegatesWithStdin(args []string, stdout, stderr io.Writer, getenv func(
 		} else {
 			exitCode = ExitGeneralError
 		}
-		return writeJSONError(stdout, *jsonFlag, newErrorf(exitCode, "%w", err))
+		return writeJSONError(stdout, jsonMode, newErrorf(exitCode, "%w", err))
 	}
 
 	encoded, err := encodeEntry(wrapped)
 	if err != nil {
-		return writeJSONError(stdout, *jsonFlag, newErrorf(ExitGeneralError, "%w", err))
+		return writeJSONError(stdout, jsonMode, newErrorf(ExitGeneralError, "%w", err))
 	}
 
-	if *jsonFlag {
+	if jsonMode {
 		out := delegatesOutput{WrappedEntry: encoded}
 		enc := json.NewEncoder(stdout)
 		enc.SetEscapeHTML(false)

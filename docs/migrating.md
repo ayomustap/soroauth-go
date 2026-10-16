@@ -87,9 +87,10 @@ cheapest strong check: capture one real output of your old code as a baseline,
 run the same inputs through soroauth, and compare the XDR bytes.
 
 ```go
-// The old code's output, captured once and frozen as the baseline.
-var baseline xdr.SorobanAuthorizationEntry
-if err := xdr.SafeUnmarshalBase64(baselineB64, &baseline); err != nil {
+// The old code's output, captured once and frozen as the baseline. It is a
+// blob from outside this program, so it is decoded at the library's bound.
+baseline, err := soroauth.DecodeAuthorizationEntry(baselineB64)
+if err != nil {
     return false, err
 }
 
@@ -139,8 +140,8 @@ Two further checks worth running once per credential arm:
   which is the fastest way to see _what_ differs when the byte comparison fails:
 
 ```go
-var baseline xdr.SorobanAuthorizationEntry
-if err := xdr.SafeUnmarshalBase64(baselineB64, &baseline); err != nil {
+baseline, err := soroauth.DecodeAuthorizationEntry(baselineB64)
+if err != nil {
     return err
 }
 oldInfo, err := soroauth.Inspect(baseline)

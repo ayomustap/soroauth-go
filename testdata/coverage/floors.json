@@ -1,5 +1,5 @@
 {
-  "note": "Per-package coverage floors for github.com/soroauth/soroauth-go, replacing the single 60% repository floor the coverage job in .github/workflows/ci-go.yml enforced until 2026-10-15. Measured 2026-10-15 with GOTOOLCHAIN=go1.25.4 (the toolchain line in go.mod) on INTEL(R) XEON(R) PLATINUM 8573C (2 vCPU), linux/amd64, with: GOTOOLCHAIN=go1.25.4 go test -coverprofile=coverage.out -covermode=atomic ./... Percentages are statement coverage summed per package directory by scripts/checkcov, not go tool cover -func, whose per-function percentages cannot be aggregated into per-package statement coverage. The measurement runs under the toolchain go.mod pins on purpose: statement counts move between Go minor versions (go1.27 counts the server package ~4.5 points lower than go1.25.4), and both `make coverage` and CI set GOTOOLCHAIN from go.mod the same way. Each floor is the measured percentage rounded down to the nearest 0.1: the 0.1 is slack against toolchain drift, and a floor nobody can meet gets raised away. Raising a floor needs a fresh measurement in the reason; lowering one needs a fresh measurement named in the commit body. Packages with no tests by design are listed under excluded with a reason, never given a floor of zero.",
+  "note": "Per-package coverage floors for github.com/soroauth/soroauth-go, replacing the single 60% repository floor the coverage job in .github/workflows/ci-go.yml enforced until 2026-10-15. Measured 2026-10-15 with GOTOOLCHAIN=go1.25.4 (the toolchain line in go.mod) on INTEL(R) XEON(R) PLATINUM 8573C (2 vCPU), linux/amd64, with: GOTOOLCHAIN=go1.25.4 go test -coverprofile=coverage.out -covermode=atomic ./... Percentages are statement coverage summed per package directory by scripts/checkcov, not go tool cover -func, whose per-function percentages cannot be aggregated into per-package statement coverage. The measurement runs under the toolchain go.mod pins on purpose: statement counts move between Go minor versions (go1.27 counts the server package ~4.5 points lower than go1.25.4), and both `make coverage` and CI set GOTOOLCHAIN from go.mod the same way. Each floor is the measured percentage rounded down to the nearest 0.1: the 0.1 is slack against toolchain drift, and a floor nobody can meet gets raised away. Raising a floor needs a fresh measurement in the reason; lowering one needs a fresh measurement named in the commit body. Packages with no tests by design are listed under excluded with a reason, never given a floor of zero. The e2e, cmd/soroauth and rpcflow entries were re-measured on 2026-10-16 with the same command and toolchain; the numbers before that re-measurement and what moved them are in the commit that changed them.",
   "policy": {
     "signing_path_floor_min_exclusive": 60,
     "text": "Floors are set from measurement. The signing path (the root package and internal/xdrcopy) carries floors strictly above the 60% repository-wide floor this scheme replaced, so a regression in the path that produces signatures cannot hide behind a repository average. Coverage is not correctness: it says which lines ran, not that the result is right — the mutation-testing work is the stronger check; these floors are a tripwire for regressions, not evidence of correctness."
@@ -17,14 +17,24 @@
       "reason": "generates the differential corpus JS and Python must reproduce; its arms and seeds run only here"
     },
     "github.com/soroauth/soroauth-go/cmd/soroauth": {
-      "measured": 84.85,
-      "floor": 84.8,
-      "reason": "the CLI is the documented surface for payload, sign and inspect; parsing regressions reach users first"
+      "measured": 86.06,
+      "floor": 86.0,
+      "reason": "the CLI is the documented surface for payload, sign, simulate and submit; parsing regressions reach users first"
+    },
+    "github.com/soroauth/soroauth-go/e2e": {
+      "measured": 84.0,
+      "floor": 83.9,
+      "reason": "the untagged half of the e2e harness: which network, which funding endpoint and which results file a run uses, decisions that a normal `go test ./...` exercises even though the scenarios themselves need the e2e tag and testnet"
     },
     "github.com/soroauth/soroauth-go/internal/doccheck": {
       "measured": 86.41,
       "floor": 86.4,
       "reason": "the exported-doc-comment gate: a bug here silently stops enforcing documentation"
+    },
+    "github.com/soroauth/soroauth-go/internal/decodepolicy": {
+      "measured": 83.9,
+      "floor": 83.9,
+      "reason": "the bounded-decoder gate: a bug here silently stops enforcing the input bound the newest code most needs"
     },
     "github.com/soroauth/soroauth-go/internal/xdrcopy": {
       "measured": 94.12,
@@ -38,14 +48,19 @@
       "reason": "the HTTP signing protocol: the server recomputes the digest and refuses a mismatch; that refusal is the safety property"
     },
     "github.com/soroauth/soroauth-go/rpcflow": {
-      "measured": 78.57,
-      "floor": 78.5,
+      "measured": 84.62,
+      "floor": 84.6,
       "reason": "the record/enforce RPC pass the CLI runs; a regression changes what callers submit to the network"
     },
     "github.com/soroauth/soroauth-go/scripts/checkcov": {
       "measured": 95.91,
       "floor": 95.9,
       "reason": "the per-package coverage gate itself: a bug here would pass the regressions it exists to catch"
+    },
+    "github.com/soroauth/soroauth-go/scripts/docsite": {
+      "measured": 88.78,
+      "floor": 88.7,
+      "reason": "the documentation site generator and internal link/anchor checker: a bug here ships broken links or omits docs"
     },
     "github.com/soroauth/soroauth-go/server": {
       "measured": 66.1,

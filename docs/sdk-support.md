@@ -18,9 +18,25 @@ is tested against this checkout.
 
 ## Upgrade cadence
 
-Upgrades are deliberate and manual. Automation only watches the GitHub Actions
-pins (see `.github/dependabot.yml`, which covers the `github-actions`
-ecosystem), so an SDK bump is always a reviewed commit.
+Upgrades are deliberate and manual. No automation moves the pin: a bump is
+always a reviewed commit, because which version is supported is a correctness
+input rather than a dependency to keep current. Automation only watches the
+GitHub Actions pins (see `.github/dependabot.yml`, which covers the
+`github-actions` ecosystem).
+
+What automation does do is notice the SDK moving first.
+`.github/workflows/ci-sdk-main.yml` runs nightly against `go-stellar-sdk@main`,
+in a workflow of its own so a break there can never turn the pinned build red.
+It builds, runs the suite, and runs the golden vectors — the wire format is what
+a bump is most likely to move, and a vector that stops matching is the finding
+worth having. A failure updates one rolling tracking issue rather than filing a
+new one each night, and a run that passes is visible as a green badge in the
+README, so a job that has stopped running is distinguishable from a job that
+keeps succeeding.
+
+A break under `main` is not a reason to bump the pin. It is the answer to "is
+there anything to bump for yet?"; the pin moves by the process below, when
+someone decides the SDK's change is one this library wants.
 
 There is no fixed schedule, and not every SDK release triggers an upgrade. The
 pin moves when the SDK ships something this library needs:

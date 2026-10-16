@@ -73,6 +73,8 @@ usage:
 commands:
   payload        print the signing preimage and payload hash for an entry
   sign           sign an entry with a seed read from an environment variable
+  simulate       run the record pass and print what the host recorded
+  submit         enforce, sign, send and poll a transaction
   delegates      wrap an entry in a delegated-signer credential
   inspect        print an entry's structure as JSON
   verify         check an entry's signatures without submitting it
@@ -140,16 +142,20 @@ func runWithStdin(args []string, stdout, stderr io.Writer, getenv func(string) s
 		return runPayloadWithStdin(args[1:], stdout, stderr, getenv, stdin)
 	case "sign":
 		return runSignWithStdin(args[1:], stdout, stderr, getenv, stdin)
+	case "simulate":
+		return runSimulate(args[1:], stdout, stderr, getenv, stdin)
+	case "submit":
+		return runSubmit(args[1:], stdout, stderr, getenv, stdin)
 	case "delegates":
 		return runDelegatesWithStdin(args[1:], stdout, stderr, getenv, stdin)
 	case "inspect":
-		return runInspect(args[1:], stdout, stderr, stdin)
+		return runInspect(args[1:], stdout, stderr, getenv, stdin)
 	case "diff":
-		return runDiff(args[1:], stdout, stderr, stdin)
+		return runDiff(args[1:], stdout, stderr, getenv, stdin)
 	case "verify":
-		return runVerify(args[1:], stdout, stderr, stdin)
+		return runVerify(args[1:], stdout, stderr, getenv, stdin)
 	case "tree":
-		return runTree(args[1:], stdout, stderr)
+		return runTree(args[1:], stdout, stderr, getenv)
 	case "tui":
 		return runTUI(args[1:], stdout, stderr, getenv)
 	case "doctor":
@@ -158,6 +164,8 @@ func runWithStdin(args []string, stdout, stderr io.Writer, getenv func(string) s
 		return runCrossCompile(args[1:], stdout, stderr)
 	case "completions":
 		return runCompletions(args[1:], stdout, stderr)
+	case "__complete-addresses":
+		return runCompleteAddresses(args[1:], stdout)
 	case "man":
 		return runMan(args[1:], stdout, stderr)
 	case "wasm-budget":
@@ -387,6 +395,7 @@ func runTUI(args []string, stdout, stderr io.Writer, getenv func(string) string)
 	var networkPassphrase string
 	var secretEnvVar string
 	var forAddress string
+	var configFlag string
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -419,27 +428,39 @@ func runTUI(args []string, stdout, stderr io.Writer, getenv func(string) string)
 				forAddress = args[i+1]
 				i++
 			}
+		case "--config":
+			if i+1 < len(args) {
+				configFlag = args[i+1]
+				i++
+			}
 		case "--help", "-h":
 			fmt.Fprint(stdout, tuiUsage)
 			return nil
 		}
 	}
 
-	if entryB64 == "" || validUntilLedger == 0 || networkPassphrase == "" || secretEnvVar == "" {
+	cfg, err := loadConfig(configFlag, getenv)
+	if err != nil {
+		return err
+	}
+	netVal := resolveNetworkValue(nil, networkPassphrase, getenv, cfg).Value
+	secVal := resolveSecretEnvValue(nil, secretEnvVar, getenv, cfg).Value
+
+	if entryB64 == "" || validUntilLedger == 0 || netVal == "" || secVal == "" {
 		fmt.Fprint(stderr, tuiUsage)
 		return newErrorf(ExitUsageError, "missing required flags")
 	}
 
 	// Resolve network passphrase
-	passphrase, err := resolveNetwork(networkPassphrase)
+	passphrase, err := resolveNetwork(netVal)
 	if err != nil {
 		return err
 	}
 
-	return soroauth.TUI(context.Background(), entryB64, validUntilLedger, passphrase, secretEnvVar, forAddress)
+	return soroauth.TUI(context.Background(), entryB64, validUntilLedger, passphrase, secVal, forAddress)
 }
 
-const tuiUsage = `usage: soroauth tui --entry <base64> --valid-until <ledger> --network <passphrase> --secret-env <var> [--for <addr>]
+const tuiUsage = `usage: soroauth tui --entry <base64> --valid-until <ledger> --network <passphrase> --secret-env <var> [--for <addr>] [--config <path>]
 
 Interactive TUI for inspecting and signing an authorization entry.
 
@@ -449,6 +470,7 @@ flags:
   --network      network passphrase: testnet, futurenet, public, or literal (required)
   --secret-env   name of environment variable holding the secret seed (required)
   --for          target address to sign for (optional, defaults to signer's address)
+  --config       path to CLI configuration file (default $SOROAUTH_CONFIG or ~/.config/soroauth/config.json)
 
 The seed is read from the named environment variable and is never prompted for
 or echoed. If stdin is not a TTY, the command degrades to non-interactive output

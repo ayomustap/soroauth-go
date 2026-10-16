@@ -121,7 +121,7 @@ func runDiffBatch(stdout, stderr io.Writer, beforeName, afterName string, stdin 
 	return run.finish(stdout, jsonFlag)
 }
 
-func runDiff(args []string, stdout, stderr io.Writer, stdin io.Reader) error {
+func runDiff(args []string, stdout, stderr io.Writer, getenv func(string) string, stdin io.Reader) error {
 	flags := flag.NewFlagSet("diff", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	flags.Usage = func() {
@@ -130,6 +130,7 @@ func runDiff(args []string, stdout, stderr io.Writer, stdin io.Reader) error {
 		flags.PrintDefaults()
 	}
 
+	configFlag := flags.String("config", "", "path to CLI configuration file (default $SOROAUTH_CONFIG or ~/.config/soroauth/config.json)")
 	beforeFlag := flags.String("before", "", "the first authorization entry, as base64 XDR")
 	afterFlag := flags.String("after", "", "the second authorization entry, as base64 XDR")
 	beforeEntriesFlag := flags.String("before-entries", "", "a file of entries to compare, one base64 entry per line, or - for stdin; paired with --after-entries")
@@ -140,32 +141,42 @@ func runDiff(args []string, stdout, stderr io.Writer, stdin io.Reader) error {
 		return newErrorf(ExitUsageError, "%w", err)
 	}
 
+	set := visitedFlags(flags)
+	cfg, err := loadConfig(*configFlag, getenv)
+	if err != nil {
+		return writeJSONError(stdout, *jsonFlag, err)
+	}
+	jsonMode, err := resolveJSONMode(set, *jsonFlag, getenv, cfg)
+	if err != nil {
+		return writeJSONError(stdout, *jsonFlag, err)
+	}
+
 	if *beforeEntriesFlag != "" || *afterEntriesFlag != "" {
 		if *beforeFlag != "" || *afterFlag != "" {
-			return writeJSONError(stdout, *jsonFlag, newErrorf(ExitUsageError,
+			return writeJSONError(stdout, jsonMode, newErrorf(ExitUsageError,
 				"--before/--after and --before-entries/--after-entries are mutually exclusive"))
 		}
 		if *beforeEntriesFlag == "" {
-			return writeJSONError(stdout, *jsonFlag, newErrorf(ExitUsageError,
+			return writeJSONError(stdout, jsonMode, newErrorf(ExitUsageError,
 				"--before-entries is required with --after-entries"))
 		}
 		if *afterEntriesFlag == "" {
-			return writeJSONError(stdout, *jsonFlag, newErrorf(ExitUsageError,
+			return writeJSONError(stdout, jsonMode, newErrorf(ExitUsageError,
 				"--after-entries is required with --before-entries"))
 		}
 		if *beforeEntriesFlag == "-" && *afterEntriesFlag == "-" {
-			return writeJSONError(stdout, *jsonFlag, newErrorf(ExitUsageError,
+			return writeJSONError(stdout, jsonMode, newErrorf(ExitUsageError,
 				"only one of --before-entries and --after-entries can be read from stdin"))
 		}
-		return runDiffBatch(stdout, stderr, *beforeEntriesFlag, *afterEntriesFlag, stdin, *jsonFlag)
+		return runDiffBatch(stdout, stderr, *beforeEntriesFlag, *afterEntriesFlag, stdin, jsonMode)
 	}
 
 	if *beforeFlag == "" {
-		return writeJSONError(stdout, *jsonFlag, newErrorf(ExitUsageError,
+		return writeJSONError(stdout, jsonMode, newErrorf(ExitUsageError,
 			"--before or --before-entries is required"))
 	}
 	if *afterFlag == "" {
-		return writeJSONError(stdout, *jsonFlag, newErrorf(ExitUsageError,
+		return writeJSONError(stdout, jsonMode, newErrorf(ExitUsageError,
 			"--after or --after-entries is required"))
 	}
 
@@ -173,25 +184,25 @@ func runDiff(args []string, stdout, stderr io.Writer, stdin io.Reader) error {
 	// is better than reading the same blob twice and reporting two identical
 	// entries, which would look like a successful comparison.
 	if *beforeFlag == "-" && *afterFlag == "-" {
-		return writeJSONError(stdout, *jsonFlag, newErrorf(ExitUsageError,
+		return writeJSONError(stdout, jsonMode, newErrorf(ExitUsageError,
 			"only one of --before and --after can be read from stdin"))
 	}
 
 	before, err := decodeEntryNamedFrom("--before", *beforeFlag, stdin)
 	if err != nil {
-		return writeJSONError(stdout, *jsonFlag, err)
+		return writeJSONError(stdout, jsonMode, err)
 	}
 	after, err := decodeEntryNamedFrom("--after", *afterFlag, stdin)
 	if err != nil {
-		return writeJSONError(stdout, *jsonFlag, err)
+		return writeJSONError(stdout, jsonMode, err)
 	}
 
 	report, err := soroauth.DiffEntries(before, after)
 	if err != nil {
-		return writeJSONError(stdout, *jsonFlag, newErrorf(ExitGeneralError, "%w", err))
+		return writeJSONError(stdout, jsonMode, newErrorf(ExitGeneralError, "%w", err))
 	}
 
-	if *jsonFlag {
+	if jsonMode {
 		encoded, err := json.MarshalIndent(report, "", "  ")
 		if err != nil {
 			return writeJSONError(stdout, true, newErrorf(ExitGeneralError, "encoding the report: %w", err))

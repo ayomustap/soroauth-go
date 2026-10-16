@@ -43,8 +43,10 @@ func Quickstart(ctx context.Context, client *rpcclient.Client, encodedTx string,
 
 	entries := make([]xdr.SorobanAuthorizationEntry, 0, len(*sim.Results[0].AuthXDR))
 	for _, encoded := range *sim.Results[0].AuthXDR {
-		var entry xdr.SorobanAuthorizationEntry
-		if err := xdr.SafeUnmarshalBase64(encoded, &entry); err != nil {
+		// Simulated entries are untrusted input, so decode them through the
+		// library's bounded decoder rather than the SDK's default.
+		entry, err := soroauth.DecodeAuthorizationEntry(encoded)
+		if err != nil {
 			return err
 		}
 		entries = append(entries, entry)

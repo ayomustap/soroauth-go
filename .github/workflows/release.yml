@@ -283,6 +283,51 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --provenance --access public
 
+  docs-site:
+    name: build and publish documentation site
+    needs: golden-drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: build and verify documentation site
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          go run ./scripts/docsite --out _site --version "${VERSION}"
+      - name: publish site to gh-pages
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          if git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
+            git fetch origin gh-pages:gh-pages
+            git worktree add "$work" gh-pages
+          else
+            git worktree add --detach "$work"
+            git -C "$work" checkout --orphan gh-pages
+            git -C "$work" rm -rf . >/dev/null 2>&1 || true
+          fi
+          rm -rf "${work}/${VERSION}"
+          mkdir -p "${work}/${VERSION}"
+          cp -R _site/. "${work}/${VERSION}/"
+          cp -R _site/. "${work}/"
+          git -C "$work" config user.name "github-actions[bot]"
+          git -C "$work" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C "$work" add -A
+          if ! git -C "$work" diff --cached --quiet; then
+            git -C "$work" commit -m "docs: publish site for ${VERSION}"
+            git -C "$work" push origin gh-pages
+          fi
+
   release:
     name: create release
     # Waits for the image too, so `needs.image.outputs.digest` exists: a release

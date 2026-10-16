@@ -669,6 +669,41 @@ silently between releases.
   go test -tags e2e -v ./e2e/...
   ```
 
+## The nightly run against the SDK's default branch (CI)
+
+`.github/workflows/ci-sdk-main.yml` builds and tests against
+`go-stellar-sdk@main` every night, in a workflow of its own. It exists because
+`docs/sdk-support.md` sets a policy for moving the pin and the pin moves when
+someone tries it: a break under `main` is cheaper to learn about on the night it
+lands than on the day someone needs the bump.
+
+It never moves the pin. `go get` runs on the job's throwaway checkout, and the
+result is reported rather than committed, so a failure there says "the SDK's
+default branch has something we would have to deal with", not "the pinned build
+is broken". It runs the build, the race-detector suite and
+`go test -run TestGoldenVectors`, and the last one is the point: the golden
+vectors are the bytes this library emits, so a wire-format change in the SDK is
+the finding that matters most.
+
+A failure updates one rolling issue titled
+`[sdk-main] go-stellar-sdk@main no longer builds or passes`, commenting on the
+existing one rather than filing another. A success is visible as a green run, a
+job summary, and the README's `go-stellar-sdk@main` badge — a nightly job that
+only speaks up on failure cannot be distinguished from one that has stopped
+running.
+
+Reproduce a failure locally by doing exactly what the job does:
+
+```sh
+go get github.com/stellar/go-stellar-sdk@main
+go mod tidy
+go test ./...
+go test -run TestGoldenVectors -v .
+```
+
+(`git checkout go.mod go.sum` afterwards. A vector that stops matching is not a
+vector to edit — see [Golden vectors](#golden-vectors).)
+
 ## Parity reports
 
 The e2e suite writes a machine-readable `parity-report.json` alongside

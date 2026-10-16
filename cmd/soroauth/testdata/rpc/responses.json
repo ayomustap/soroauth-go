@@ -1,0 +1,47 @@
+{
+  "note": "Response shapes for the JSON-RPC methods the simulate and submit subcommands consume, so their tests never touch the network. The auth arrays carry the committed golden vectors' entries, so no test hand-builds XDR; the transactionData is an empty SorobanTransactionData, which is all these subcommands forward.",
+  "simulate_record": {
+    "latestLedger": 1234,
+    "minResourceFee": "4321",
+    "results": [
+      {
+        "auth": [
+          "AAAAAgAAAAAAAAAAt7bYKS3hKDB7Aw8ykLPfkH7kJtcX2OWQMp2pPDOof8oRIhD0femBFQAAAAAAAAAQAAAAAQAAAAAAAAAAAAAAATRrZDx31oeiVF0aSLeGFRrK5f+qDrWvYPXG86PwH6rRAAAACHRyYW5zZmVyAAAADQAAAAEAAAAAAAAAAQAAAAMAAAAHAAAABP////kAAAAF//////////8AAAAG/9////////8AAAAPAAAACHRyYW5zZmVyAAAADgAAABFhIHN0cmluZyBhcmd1bWVudAAAAAAAAA0AAAAIc29yb2F1dGgAAAASAAAAAAAAAADPqMFVnXxt0Bnz2j/PUq2wC1ksRV8F0C/Wn7FszQMp5AAAABIAAAABiYTtffRvjkxhpdNokUurCdK7WuhA3mCRriGP1/FA4bIAAAAQAAAAAQAAAAIAAAADAAAAAQAAAAMAAAACAAAAEQAAAAEAAAABAAAADwAAAAZhbW91bnQAAAAAAAr//////////wAAAAAAAAAqAAAAAA==",
+          "AAAAAQAAAAAAAAAAt7bYKS3hKDB7Aw8ykLPfkH7kJtcX2OWQMp2pPDOof8oRIhD0femBFQAAAAAAAAAQAAAAAQAAAAAAAAAAAAAAATRrZDx31oeiVF0aSLeGFRrK5f+qDrWvYPXG86PwH6rRAAAACHRyYW5zZmVyAAAADQAAAAEAAAAAAAAAAQAAAAMAAAAHAAAABP////kAAAAF//////////8AAAAG/9////////8AAAAPAAAACHRyYW5zZmVyAAAADgAAABFhIHN0cmluZyBhcmd1bWVudAAAAAAAAA0AAAAIc29yb2F1dGgAAAASAAAAAAAAAADPqMFVnXxt0Bnz2j/PUq2wC1ksRV8F0C/Wn7FszQMp5AAAABIAAAABiYTtffRvjkxhpdNokUurCdK7WuhA3mCRriGP1/FA4bIAAAAQAAAAAQAAAAIAAAADAAAAAQAAAAMAAAACAAAAEQAAAAEAAAABAAAADwAAAAZhbW91bnQAAAAAAAr//////////wAAAAAAAAAqAAAAAA=="
+        ]
+      }
+    ],
+    "transactionData": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+  },
+  "simulate_enforce": {
+    "latestLedger": 1235,
+    "minResourceFee": "987654",
+    "results": [
+      {
+        "auth": [
+          "AAAAAgAAAAAAAAAAt7bYKS3hKDB7Aw8ykLPfkH7kJtcX2OWQMp2pPDOof8oRIhD0femBFQAS1ocAAAAQAAAAAQAAAAEAAAARAAAAAQAAAAIAAAAPAAAACnB1YmxpY19rZXkAAAAAAA0AAAAgt7bYKS3hKDB7Aw8ykLPfkH7kJtcX2OWQMp2pPDOof8oAAAAPAAAACXNpZ25hdHVyZQAAAAAAAA0AAABAq0V6pjN0UmPZafPLTtuSN37Wa2DC0uYwjEuU6jfUJwvSJBy9pmTooR4H04KEP/MQmQYF6rOmYTqUh9LRwYNVDwAAAAAAAAABNGtkPHfWh6JUXRpIt4YVGsrl/6oOta9g9cbzo/AfqtEAAAAIdHJhbnNmZXIAAAANAAAAAQAAAAAAAAABAAAAAwAAAAcAAAAE////+QAAAAX//////////wAAAAb/3////////wAAAA8AAAAIdHJhbnNmZXIAAAAOAAAAEWEgc3RyaW5nIGFyZ3VtZW50AAAAAAAADQAAAAhzb3JvYXV0aAAAABIAAAAAAAAAAM+owVWdfG3QGfPaP89SrbALWSxFXwXQL9afsWzNAynkAAAAEgAAAAGJhO199G+OTGGl02iRS6sJ0rta6EDeYJGuIY/X8UDhsgAAABAAAAABAAAAAgAAAAMAAAABAAAAAwAAAAIAAAARAAAAAQAAAAEAAAAPAAAABmFtb3VudAAAAAAACv//////////AAAAAAAAACoAAAAA"
+        ]
+      }
+    ],
+    "transactionData": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+  },
+  "send_pending": {
+    "hash": "a1b2c3d4e5f60718293a4b5c6d7e8f901234567890abcdef1234567890abcdef",
+    "status": "PENDING"
+  },
+  "get_transaction_success": {
+    "envelopeXdr": "",
+    "latestLedger": 4242,
+    "ledger": 4242,
+    "resultXdr": "",
+    "status": "SUCCESS"
+  },
+  "get_transaction_failed": {
+    "ledger": 4243,
+    "resultXdr": "AAAAAAAAAGT////7AAAAAA==",
+    "status": "FAILED",
+    "diagnosticEventsXdr": [
+      "AAAAAA=="
+    ]
+  }
+}

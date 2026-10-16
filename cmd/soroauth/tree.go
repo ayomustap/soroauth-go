@@ -46,7 +46,7 @@ exit codes:
   2  usage error (missing --entry, malformed input, or an unknown --format)
 `
 
-func runTree(args []string, stdout, stderr io.Writer) error {
+func runTree(args []string, stdout, stderr io.Writer, getenv func(string) string) error {
 	flags := flag.NewFlagSet("tree", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	flags.Usage = func() {
@@ -55,6 +55,7 @@ func runTree(args []string, stdout, stderr io.Writer) error {
 		flags.PrintDefaults()
 	}
 
+	configFlag := flags.String("config", "", "path to CLI configuration file (default $SOROAUTH_CONFIG or ~/.config/soroauth/config.json)")
 	entryFlag := flags.String("entry", "", "the authorization entry or transaction envelope, as base64 XDR")
 	formatFlag := flags.String("format", "ascii", "tree rendering: ascii or dot")
 	jsonFlag := flags.Bool("json", false, "output structured JSON instead of a rendering")
@@ -63,28 +64,47 @@ func runTree(args []string, stdout, stderr io.Writer) error {
 		return newErrorf(ExitUsageError, "%w", err)
 	}
 
-	if *formatFlag != "ascii" && *formatFlag != "dot" {
-		return writeJSONError(stdout, *jsonFlag, newErrorf(ExitUsageError, "--format must be ascii or dot, got %q", *formatFlag))
-	}
-
-	input, err := decodeEntryOrEnvelope(*entryFlag)
+	set := visitedFlags(flags)
+	cfg, err := loadConfig(*configFlag, getenv)
 	if err != nil {
 		return writeJSONError(stdout, *jsonFlag, err)
 	}
 
+	if set["format"] && *formatFlag != "ascii" && *formatFlag != "dot" {
+		return writeJSONError(stdout, *jsonFlag, newErrorf(ExitUsageError, "--format must be ascii or dot, got %q", *formatFlag))
+	}
+
+	fmtRes, err := resolveFormatValue(set, *formatFlag, *jsonFlag, getenv, cfg, "ascii")
+	if err != nil {
+		return writeJSONError(stdout, *jsonFlag, err)
+	}
+	jsonMode := *jsonFlag || fmtRes.Value == "json"
+	effectiveFormat := fmtRes.Value
+	if effectiveFormat == "text" || effectiveFormat == "json" {
+		effectiveFormat = "ascii"
+	}
+	if set["format"] {
+		effectiveFormat = *formatFlag
+	}
+
+	input, err := decodeEntryOrEnvelope(*entryFlag)
+	if err != nil {
+		return writeJSONError(stdout, jsonMode, err)
+	}
+
 	if input.IsEnvelope {
-		return runTreeEnvelope(stdout, input.Envelope, *formatFlag, *jsonFlag)
+		return runTreeEnvelope(stdout, input.Envelope, effectiveFormat, jsonMode)
 	}
 
 	info, err := soroauth.Inspect(input.Entry)
 	if err != nil {
-		return writeJSONError(stdout, *jsonFlag, newErrorf(ExitGeneralError, "%w", err))
+		return writeJSONError(stdout, jsonMode, newErrorf(ExitGeneralError, "%w", err))
 	}
 
-	if *jsonFlag {
+	if jsonMode {
 		return writeJSON(stdout, info)
 	}
-	fmt.Fprint(stdout, renderTree(info, *formatFlag))
+	fmt.Fprint(stdout, renderTree(info, effectiveFormat))
 	return nil
 }
 

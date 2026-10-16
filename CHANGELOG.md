@@ -8,6 +8,58 @@ this project adheres to
 
 ## [Unreleased]
 
+- The CLI can obtain an authorization entry and submit one, which are the two
+  steps its whole workflow was missing. `soroauth simulate` runs the record pass
+  for a transaction envelope and prints every entry the host recorded with its
+  operation index, entry index and credential arm, plus the minimum resource
+  fee, the `SorobanTransactionData`, the ledger it ran against and the input
+  envelope rebuilt with the recorded entries attached — the thing the next step
+  has to sign. The arm is reported as the host recorded it, not as the caller
+  asked for, because `--use-upgraded-auth` is best-effort. `soroauth submit`
+  then takes that envelope, runs the enforcing pass, signs the envelope with the
+  seed named by `--secret-env` (never a flag value), sends it and polls to a
+  terminal state, printing the hash the moment the RPC accepts it so a timeout
+  still leaves something to look up. It refuses to submit a transaction whose
+  address entries are unsigned unless `--allow-unsigned` says otherwise, naming
+  the address; a delegates entry's Void top-level node is not a refusal, because
+  CAP-71-01 permits it. Neither subcommand invents an endpoint: `--rpc-url` or
+  `$SOROAUTH_RPC_URL` is required. (#368, #369)
+
+- `rpcflow` exposes the two halves of the flow the CLI needed. `SimulateRecord`
+  runs the record pass and returns the recorded entries with their positions and
+  arms, the minimum resource fee, the transaction data and a rebuilt envelope;
+  `Submit` runs the enforcing pass, assembles, signs the envelope, sends and
+  polls. `SignAndSubmit` now ends by calling `Submit`, so the enforcing pass has
+  one implementation rather than one per entry point, and `Submit` carries an
+  `OnSent` hook that fires between the send and the poll. `Submission.Arm` is
+  reported with the library's own credential-type names (`address_v2`) rather
+  than the XDR enum name, matching what `inspect` reports for the same entry.
+  (#368, #369)
+
+- `soroauth.DecodeTransactionEnvelope` bounds a transaction envelope the way
+  `DecodeAuthorizationEntry` bounds an entry: `MaxDecodeDepth` and the 1 MiB
+  decoded input limit instead of the Go SDK's much looser defaults. (#377)
+
+- A check over the AST enforces that no exported function of this module reaches
+  the SDK's unbounded XDR decoders. `internal/decodepolicy` resolves the `xdr`
+  package's local name from each file's imports so `encoding/json.Unmarshal` is
+  not a false positive, follows package-local calls so moving the decode into a
+  helper does not hide it, reports the whole call chain, and treats
+  `SafeUnmarshalBase64WithOptions` as the bounded call it is. A deliberate
+  exception is an explicit `decode-allow:` comment with a reason, and a run that
+  finds no exported function at all fails rather than passing vacuously. The
+  violations it found are fixed: `TUI` decoded its `--entry` with the SDK
+  default, `rpcflow` decoded recorded entries that way, and the README
+  Quickstart and the migration guide taught it. (#377)
+
+- A nightly workflow builds and tests against `go-stellar-sdk@main` in a
+  workflow of its own, so a break there cannot turn the pinned build red. It
+  runs the build, the race-detector suite and the golden vectors — the wire
+  format is what a bump is most likely to move — updates one rolling tracking
+  issue on failure rather than filing one per night, and reports a green run in
+  the job summary and in a README badge so a job that has stopped running is
+  distinguishable from one that keeps passing. (#376)
+
 - Entries signed by the `v0.1.0` release are frozen under
   `testdata/frozen/v0.1.0/` and checked against the current code: each must
   still decode to the same bytes, rebuild the payload the release recorded,

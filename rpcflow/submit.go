@@ -122,6 +122,13 @@ type Params struct {
 	BaseFee int64
 	// ResourceFeePadding overrides DefaultResourceFeePadding when non-zero.
 	ResourceFeePadding int64
+	// OnSent, when set, is called once the RPC has accepted the transaction
+	// for submission and before it is polled. It is the hook a caller needs to
+	// report the hash while the transaction can still be looked up: polling
+	// can time out or be cancelled, and a hash printed afterwards is printed
+	// from a process that may never get there. The Submission it receives has
+	// Hash and Status set, and Ledger still zero.
+	OnSent func(Submission)
 }
 
 // SignAndSubmit runs record, sign, enforce, assemble, sign and send, and
@@ -153,11 +160,11 @@ func SignAndSubmit(ctx context.Context, p Params) (Submission, error) {
 
 	// 1. Record. The RPC reports which addresses must authorize the call and
 	// hands back unsigned authorization entries.
-	recordTx, err := p.build(source, p.Operation)
+	recordTx, err := buildTransaction(source, p.Operation, p.BaseFee)
 	if err != nil {
 		return sub, fmt.Errorf("soroauth: sign and submit (record): %w", err)
 	}
-	recorded, err := p.simulate(ctx, recordTx, rpc.AuthModeRecord)
+	recorded, err := simulate(ctx, p.Client, recordTx, rpc.AuthModeRecord)
 	if err != nil {
 		return sub, fmt.Errorf("soroauth: sign and submit (record): %w", err)
 	}
@@ -177,37 +184,133 @@ func SignAndSubmit(ctx context.Context, p Params) (Submission, error) {
 		return sub, fmt.Errorf("soroauth: sign and submit (sign): %w", err)
 	}
 
-	// 3. Enforce. Re-simulate carrying the signed entries, so the resource fee
+	// 3-5. Enforce, assemble, sign the envelope and send. The tail lives in
+	// Submit because it is the same work whether the entries were signed here
+	// or arrived already signed, and one implementation is what keeps the
+	// enforcing pass from being skipped on one of the two paths.
+	return Submit(ctx, SubmitParams{
+		Source:             source,
+		Operation:          p.Operation,
+		Entries:            signedEntries,
+		EnvelopeSigners:    p.EnvelopeSigners,
+		NetworkPassphrase:  p.NetworkPassphrase,
+		Client:             p.Client,
+		BaseFee:            p.BaseFee,
+		ResourceFeePadding: p.ResourceFeePadding,
+		OnSent:             p.OnSent,
+	})
+}
+
+// SubmitParams is what Submit needs.
+//
+// Source and Operation are the transaction as it stands, not a description of
+// one to build: the sequence number, fee, memo and preconditions already on
+// the caller's envelope are the ones that get submitted, so a submit does not
+// quietly renumber an account or reprice a transaction.
+type SubmitParams struct {
+	// Source is the account that pays for and sequences the transaction. Its
+	// sequence number is used as given.
+	Source txnbuild.Account
+	// Operation is the invocation being authorized. Its Auth is replaced with
+	// Entries and its Ext with the enforcing pass's resource data; anything
+	// already in them is replaced.
+	Operation txnbuild.InvokeHostFunction
+	// Entries are the signed authorization entries to submit with. Every one
+	// of them is carried into the enforcing pass, because that pass is what
+	// prices them.
+	Entries []xdr.SorobanAuthorizationEntry
+	// EnvelopeSigners sign the transaction envelope itself. This is the source
+	// account's key, and it is separate from the entry signatures: an entry
+	// signature authorizes a call, an envelope signature pays for it.
+	EnvelopeSigners []*keypair.Full
+	// NetworkPassphrase is the network the transaction is signed for. A
+	// transaction signed for the wrong network is refused by the host.
+	NetworkPassphrase string
+	// Client is the RPC the enforcing pass and the submission run against.
+	Client Client
+	// BaseFee is the per-operation fee. Zero means txnbuild.MinBaseFee * 100.
+	BaseFee int64
+	// ResourceFeePadding overrides DefaultResourceFeePadding when non-zero.
+	ResourceFeePadding int64
+	// OnSent is called after SendTransaction returns and before polling. See
+	// Params.OnSent.
+	OnSent func(Submission)
+}
+
+// Submit runs the enforcing pass over entries that are already signed,
+// assembles the transaction from it, signs the envelope, sends it, and polls
+// to a terminal state.
+//
+// It is the second half of SignAndSubmit, exposed because a caller that
+// signed its entries elsewhere (another process, a hardware signer, the CLI's
+// sign subcommand) still needs the enforcing pass. Submitting without it is
+// the silent, incorrect shortcut described on this package: the signatures are
+// bytes the host has to read and charge for, so a resource fee computed before
+// they existed is too small, and the transaction is accepted, charged for, and
+// then fails during application.
+//
+// Like SignAndSubmit, it does not fail the call when the host rejects the
+// transaction on-chain: a rejection is an outcome, reported in the returned
+// Submission with the host's raw error, not a transport failure. A non-nil
+// error means the flow could not be completed, not that the transaction was
+// refused.
+func Submit(ctx context.Context, p SubmitParams) (Submission, error) {
+	var sub Submission
+
+	if err := ctx.Err(); err != nil {
+		return sub, fmt.Errorf("soroauth: submit: %w", err)
+	}
+	if err := p.validate(); err != nil {
+		return sub, err
+	}
+
+	// Enforce. Re-simulate carrying the signed entries, so the resource fee
 	// accounts for the signatures that are actually going out.
 	enforceOp := p.Operation
-	enforceOp.Auth = signedEntries
-	enforceTx, err := p.build(source, enforceOp)
+	enforceOp.Auth = p.Entries
+	enforceTx, err := buildTransaction(p.Source, enforceOp, p.BaseFee)
 	if err != nil {
-		return sub, fmt.Errorf("soroauth: sign and submit (enforce): %w", err)
+		return sub, fmt.Errorf("soroauth: submit (enforce): %w", err)
 	}
-	enforced, err := p.simulate(ctx, enforceTx, rpc.AuthModeEnforce)
+	enforced, err := simulate(ctx, p.Client, enforceTx, rpc.AuthModeEnforce)
 	if err != nil {
-		return sub, fmt.Errorf("soroauth: sign and submit (enforce): %w", err)
+		return sub, fmt.Errorf("soroauth: submit (enforce): %w", err)
 	}
 
-	// 4. Assemble from the enforcing pass, which is the one that priced the
+	// Assemble from the enforcing pass, which is the one that priced the
 	// signatures.
 	finalOp := p.Operation
-	finalOp.Auth = signedEntries
-	if err := p.applyResources(&finalOp, enforced); err != nil {
-		return sub, fmt.Errorf("soroauth: sign and submit (assemble): %w", err)
+	finalOp.Auth = p.Entries
+	if err := applyResources(&finalOp, enforced, p.ResourceFeePadding); err != nil {
+		return sub, fmt.Errorf("soroauth: submit (assemble): %w", err)
 	}
-	finalTx, err := p.build(source, finalOp)
+	finalTx, err := buildTransaction(p.Source, finalOp, p.BaseFee)
 	if err != nil {
-		return sub, fmt.Errorf("soroauth: sign and submit (assemble): %w", err)
+		return sub, fmt.Errorf("soroauth: submit (assemble): %w", err)
 	}
 
-	// 5. Sign the envelope and send.
+	// Sign the envelope and send.
 	signedTx, err := finalTx.Sign(p.NetworkPassphrase, p.EnvelopeSigners...)
 	if err != nil {
-		return sub, fmt.Errorf("soroauth: sign and submit (envelope): %w", err)
+		return sub, fmt.Errorf("soroauth: submit (envelope): %w", err)
 	}
-	return p.send(ctx, signedTx)
+	return send(ctx, p.Client, signedTx, p.OnSent)
+}
+
+func (p SubmitParams) validate() error {
+	switch {
+	case p.Source == nil:
+		return fmt.Errorf("soroauth: submit: Source is required")
+	case p.Client == nil:
+		return fmt.Errorf("soroauth: submit: Client is required")
+	case p.NetworkPassphrase == "":
+		return fmt.Errorf("soroauth: submit: NetworkPassphrase is required")
+	case len(p.EnvelopeSigners) == 0:
+		// Without this the transaction goes out unsigned and is refused for a
+		// missing signature, which reads as an auth problem and is not one.
+		return fmt.Errorf("soroauth: submit: at least one EnvelopeSigner is required to pay for the transaction")
+	}
+	return nil
 }
 
 func (p Params) validate() error {
@@ -244,14 +347,14 @@ func (p Params) sequencer() (txnbuild.Account, error) {
 	}, nil
 }
 
-// build makes an unsigned transaction carrying one InvokeHostFunction.
+// buildTransaction makes an unsigned transaction carrying one
+// InvokeHostFunction.
 //
 // IncrementSequenceNum is false because the sequence number is already
 // resolved in the snapshot passed in, and all three passes must use it: the
 // record pass, the enforcing pass and the submitted transaction are the same
 // transaction priced differently, not three transactions.
-func (p Params) build(source txnbuild.Account, op txnbuild.InvokeHostFunction) (*txnbuild.Transaction, error) {
-	baseFee := p.BaseFee
+func buildTransaction(source txnbuild.Account, op txnbuild.InvokeHostFunction, baseFee int64) (*txnbuild.Transaction, error) {
 	if baseFee == 0 {
 		baseFee = txnbuild.MinBaseFee * 100
 	}
@@ -264,13 +367,13 @@ func (p Params) build(source txnbuild.Account, op txnbuild.InvokeHostFunction) (
 	})
 }
 
-func (p Params) simulate(ctx context.Context, tx *txnbuild.Transaction, mode string) (rpc.SimulateTransactionResponse, error) {
+func simulate(ctx context.Context, client Client, tx *txnbuild.Transaction, mode string) (rpc.SimulateTransactionResponse, error) {
 	var zero rpc.SimulateTransactionResponse
 	encoded, err := tx.Base64()
 	if err != nil {
 		return zero, fmt.Errorf("encoding the transaction: %w", err)
 	}
-	response, err := p.Client.SimulateTransaction(ctx, rpc.SimulateTransactionRequest{
+	response, err := client.SimulateTransaction(ctx, rpc.SimulateTransactionRequest{
 		Transaction: encoded,
 		AuthMode:    mode,
 	})
@@ -297,12 +400,16 @@ func (p Params) expiration(ctx context.Context) (uint32, error) {
 
 // applyResources attaches the enforcing pass's footprint and fee to the
 // operation.
-func (p Params) applyResources(op *txnbuild.InvokeHostFunction, sim rpc.SimulateTransactionResponse) error {
+//
+// decode-allow: the base64 blob is the SorobanTransactionData in the response
+// to the simulation this package just issued, not a caller-supplied blob, and
+// soroauth publishes no bounded decoder for that type — its bound covers
+// authorization entries and the envelopes that carry them.
+func applyResources(op *txnbuild.InvokeHostFunction, sim rpc.SimulateTransactionResponse, padding int64) error {
 	var data xdr.SorobanTransactionData
 	if err := xdr.SafeUnmarshalBase64(sim.TransactionDataXDR, &data); err != nil {
 		return fmt.Errorf("decoding the simulated transaction data: %w", err)
 	}
-	padding := p.ResourceFeePadding
 	if padding == 0 {
 		padding = DefaultResourceFeePadding
 	}
@@ -313,32 +420,40 @@ func (p Params) applyResources(op *txnbuild.InvokeHostFunction, sim rpc.Simulate
 	return nil
 }
 
-func (p Params) send(ctx context.Context, tx *txnbuild.Transaction) (Submission, error) {
+// send submits a signed transaction and polls it to a terminal state.
+//
+// OnSent is called between the two, because that is the only moment at which a
+// caller can report a hash it will still be able to look up if polling never
+// returns.
+func send(ctx context.Context, client Client, tx *txnbuild.Transaction, onSent func(Submission)) (Submission, error) {
 	var sub Submission
 	encoded, err := tx.Base64()
 	if err != nil {
-		return sub, fmt.Errorf("soroauth: sign and submit (send): encoding the signed transaction: %w", err)
+		return sub, fmt.Errorf("soroauth: submit (send): encoding the signed transaction: %w", err)
 	}
 
 	// Read the arm off the envelope that is actually going out, rather than
 	// assuming it is the one that was built.
 	sub.Arm = credentialArmOf(encoded)
 
-	sent, err := p.Client.SendTransaction(ctx, rpc.SendTransactionRequest{Transaction: encoded})
+	sent, err := client.SendTransaction(ctx, rpc.SendTransactionRequest{Transaction: encoded})
 	if err != nil {
-		return sub, fmt.Errorf("soroauth: sign and submit (send): %w", err)
+		return sub, fmt.Errorf("soroauth: submit (send): %w", err)
 	}
 
 	sub.Hash, sub.Status = sent.Hash, sent.Status
+	if onSent != nil {
+		onSent(sub)
+	}
 	if sent.Status == stellarcore.TXStatusError {
 		sub.RawError = sent.ErrorResultXDR
 		sub.Diagnostics = sent.DiagnosticEventsXDR
 		return sub, nil
 	}
 
-	polled, err := p.Client.PollTransaction(ctx, sent.Hash)
+	polled, err := client.PollTransaction(ctx, sent.Hash)
 	if err != nil {
-		return sub, fmt.Errorf("soroauth: sign and submit (poll): %w", err)
+		return sub, fmt.Errorf("soroauth: submit (poll): %w", err)
 	}
 	sub.Status, sub.Ledger = polled.Status, polled.Ledger
 	if polled.Status != rpc.TransactionStatusSuccess {
@@ -367,8 +482,11 @@ func recordedAuthEntries(sim rpc.SimulateTransactionResponse) ([]xdr.SorobanAuth
 	encodedEntries := *sim.Results[0].AuthXDR
 	entries := make([]xdr.SorobanAuthorizationEntry, 0, len(encodedEntries))
 	for i, encoded := range encodedEntries {
-		var entry xdr.SorobanAuthorizationEntry
-		if err := xdr.SafeUnmarshalBase64(encoded, &entry); err != nil {
+		// Recorded entries come off the wire, so they go through the
+		// library's bounded decoder rather than the SDK's default, which
+		// cannot refuse an input for being too long.
+		entry, err := soroauth.DecodeAuthorizationEntry(encoded)
+		if err != nil {
 			return nil, fmt.Errorf("decoding recorded entry %d: %w", i, err)
 		}
 		entries = append(entries, entry)
@@ -378,6 +496,17 @@ func recordedAuthEntries(sim rpc.SimulateTransactionResponse) ([]xdr.SorobanAuth
 
 // credentialArmOf decodes a submitted envelope and reports the credential arm
 // of its first authorization entry, or "" if it carries none.
+//
+// The arm is reported with the library's own credential-type names —
+// address_v2, not SorobanCredentialsTypeSorobanCredentialsAddressV2 — so it
+// matches what Inspect, verify and the CLI's simulate report for the same
+// entry, and a caller can compare them rather than translate between them.
+//
+// decode-allow: this envelope is the one this package just built and signed,
+// so it is not untrusted input; the decoder's defaults are the wrong bound for
+// a caller-supplied blob and the irrelevant one for a value that never left
+// the process. Every entry this package reads off the wire goes through
+// soroauth.DecodeAuthorizationEntry instead.
 func credentialArmOf(envelopeBase64 string) string {
 	var envelope xdr.TransactionEnvelope
 	if err := xdr.SafeUnmarshalBase64(envelopeBase64, &envelope); err != nil {
@@ -387,5 +516,9 @@ func credentialArmOf(envelopeBase64 string) string {
 	if err != nil || len(entries) == 0 {
 		return ""
 	}
-	return entries[0].Entry.Credentials.Type.String()
+	arm, err := credentialArm(entries[0].Entry)
+	if err != nil {
+		return ""
+	}
+	return arm
 }

@@ -30,6 +30,10 @@ type fakeClient struct {
 	authModes  []string
 	authCounts []int
 
+	// upgradedAuth records, per simulation, whether the caller asked the host
+	// to record the address-bound V2 arm.
+	upgradedAuth []bool
+
 	// seqNums records, per simulation, the sequence number the simulated
 	// transaction carried.
 	seqNums []xdr.SequenceNumber
@@ -49,6 +53,7 @@ func (f *fakeClient) SimulateTransaction(_ context.Context, req rpc.SimulateTran
 	f.calls = append(f.calls, "simulate:"+req.AuthMode)
 	f.authModes = append(f.authModes, req.AuthMode)
 	f.authCounts = append(f.authCounts, authEntryCount(req.Transaction))
+	f.upgradedAuth = append(f.upgradedAuth, req.UseUpgradedAuth)
 	f.seqNums = append(f.seqNums, txSequenceNumber(req.Transaction))
 	if f.simErr != nil {
 		return rpc.SimulateTransactionResponse{}, f.simErr
@@ -316,9 +321,11 @@ func TestSignAndSubmitSubmitsASignedEnvelope(t *testing.T) {
 		t.Error("the submitted envelope carries no signature; it would be refused for a missing signature")
 	}
 
-	// And the arm is read off the envelope that went out, not assumed.
-	if sub.Arm != xdr.SorobanCredentialsTypeSorobanCredentialsAddress.String() {
-		t.Errorf("arm %q, want the address arm that was signed", sub.Arm)
+	// And the arm is read off the envelope that went out, not assumed. It is
+	// reported with the library's own credential-type name, which is what
+	// Inspect reports for the same entry.
+	if sub.Arm != soroauth.CredentialTypeAddress {
+		t.Errorf("arm %q, want %q (the address arm that was signed)", sub.Arm, soroauth.CredentialTypeAddress)
 	}
 }
 

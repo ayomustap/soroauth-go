@@ -248,3 +248,76 @@ func FuzzDecodeAuthorizationEntry(f *testing.F) {
 		}
 	})
 }
+
+// TestDecodeTransactionEnvelopeReadsAValidEnvelope proves the bound is above a
+// real Soroban transaction and that the decoder changes nothing: re-encoding
+// the decoded envelope reproduces the input bytes.
+func TestDecodeTransactionEnvelopeReadsAValidEnvelope(t *testing.T) {
+	envelope, err := xdr.MarshalBase64(transactionEnvelope(t,
+		invokeOperation(t, entryForArm(t, xdr.SorobanCredentialsTypeSorobanCredentialsAddressV2, 7))))
+	if err != nil {
+		t.Fatalf("encoding the test envelope: %v", err)
+	}
+	want, err := base64.StdEncoding.DecodeString(envelope)
+	if err != nil {
+		t.Fatalf("decoding the test envelope: %v", err)
+	}
+
+	got, err := DecodeTransactionEnvelope(envelope)
+	if err != nil {
+		t.Fatalf("DecodeTransactionEnvelope returned an unexpected error: %v", err)
+	}
+	roundTrip, err := got.MarshalBinary()
+	if err != nil {
+		t.Fatalf("re-marshalling the decoded envelope: %v", err)
+	}
+	if !bytes.Equal(roundTrip, want) {
+		t.Errorf("re-encoded envelope differs from the input\n want %x\n  got %x", want, roundTrip)
+	}
+}
+
+// TestDecodeTransactionEnvelopeRejectsEmptyInput keeps the empty case an error
+// rather than a silently zero-valued envelope.
+func TestDecodeTransactionEnvelopeRejectsEmptyInput(t *testing.T) {
+	if _, err := DecodeTransactionEnvelope(""); err == nil {
+		t.Fatal("decoding an empty input succeeded")
+	}
+}
+
+// TestDecodeTransactionEnvelopeRejectsOversizedInput proves the length check
+// runs before any base64 or XDR work: the input is not valid base64 at all,
+// yet it is refused as a limit rather than as malformed input.
+func TestDecodeTransactionEnvelopeRejectsOversizedInput(t *testing.T) {
+	oversized := strings.Repeat("A", base64.StdEncoding.EncodedLen(MaxDecodeInputBytes)+4)
+
+	_, err := DecodeTransactionEnvelope(oversized)
+	if err == nil {
+		t.Fatalf("decoding a %d-byte input succeeded", len(oversized))
+	}
+	if !errors.Is(err, ErrDecodeLimit) {
+		t.Errorf("error %q does not match ErrDecodeLimit", err)
+	}
+}
+
+// TestDecodeTransactionEnvelopeRejectsPathologicalDepth is the envelope half of
+// the depth guard: an envelope whose operation carries a deeply nested
+// invocation tree must be refused rather than fully decoded, even though the
+// SDK's default of 1500 levels would accept it.
+func TestDecodeTransactionEnvelopeRejectsPathologicalDepth(t *testing.T) {
+	deep := xdr.SorobanAuthorizationEntry{
+		Credentials:    xdr.SorobanCredentials{Type: xdr.SorobanCredentialsTypeSorobanCredentialsSourceAccount},
+		RootInvocation: nestedInvocation(t, MaxDecodeDepth*4),
+	}
+	envelope, err := xdr.MarshalBase64(transactionEnvelope(t, invokeOperation(t, deep)))
+	if err != nil {
+		t.Fatalf("encoding the pathological envelope: %v", err)
+	}
+
+	got, err := DecodeTransactionEnvelope(envelope)
+	if err == nil {
+		t.Fatalf("decoding a %d-level envelope succeeded, returning %+v", MaxDecodeDepth*4, got)
+	}
+	if !errors.Is(err, ErrDecodeLimit) {
+		t.Errorf("error %q does not match ErrDecodeLimit", err)
+	}
+}

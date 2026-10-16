@@ -132,7 +132,7 @@ func verifyFailed(report soroauth.VerificationReport, allowUnsigned bool) bool {
 	return false
 }
 
-func runVerify(args []string, stdout, stderr io.Writer, stdin io.Reader) error {
+func runVerify(args []string, stdout, stderr io.Writer, getenv func(string) string, stdin io.Reader) error {
 	flags := flag.NewFlagSet("verify", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	flags.Usage = func() {
@@ -141,6 +141,7 @@ func runVerify(args []string, stdout, stderr io.Writer, stdin io.Reader) error {
 		flags.PrintDefaults()
 	}
 
+	configFlag := flags.String("config", "", "path to CLI configuration file (default $SOROAUTH_CONFIG or ~/.config/soroauth/config.json)")
 	entryFlag := flags.String("entry", "", "the authorization entry or transaction envelope, as base64 XDR")
 	entriesFlag := flags.String("entries", "", "a file of entries to verify, one base64 entry per line, or - for stdin")
 	networkFlag := flags.String("network", "", "testnet, futurenet, public, or a literal network passphrase")
@@ -152,26 +153,37 @@ func runVerify(args []string, stdout, stderr io.Writer, stdin io.Reader) error {
 		return newErrorf(ExitUsageError, "%w", err)
 	}
 
+	set := visitedFlags(flags)
+	cfg, err := loadConfig(*configFlag, getenv)
+	if err != nil {
+		return writeJSONError(stdout, *jsonFlag, err)
+	}
+	jsonMode, err := resolveJSONMode(set, *jsonFlag, getenv, cfg)
+	if err != nil {
+		return writeJSONError(stdout, *jsonFlag, err)
+	}
+	resolvedNet := resolveNetworkValue(set, *networkFlag, getenv, cfg).Value
+
 	if *entryFlag != "" && *entriesFlag != "" {
-		return writeJSONError(stdout, *jsonFlag,
+		return writeJSONError(stdout, jsonMode,
 			newErrorf(ExitUsageError, "--entry and --entries are mutually exclusive"))
 	}
 	if *entriesFlag != "" {
 		return runVerifyBatch(stdout, stderr, *entriesFlag, stdin,
-			*networkFlag, *validUntil, *allowUnsigned, *jsonFlag)
+			resolvedNet, *validUntil, *allowUnsigned, jsonMode)
 	}
 	if *entryFlag == "" {
-		return writeJSONError(stdout, *jsonFlag,
+		return writeJSONError(stdout, jsonMode,
 			newErrorf(ExitUsageError, "--entry or --entries is required"))
 	}
 
 	input, err := decodeEntryOrEnvelopeFrom(*entryFlag, stdin)
 	if err != nil {
-		return writeJSONError(stdout, *jsonFlag, err)
+		return writeJSONError(stdout, jsonMode, err)
 	}
-	passphrase, err := resolveNetwork(*networkFlag)
+	passphrase, err := resolveNetwork(resolvedNet)
 	if err != nil {
-		return writeJSONError(stdout, *jsonFlag, err)
+		return writeJSONError(stdout, jsonMode, err)
 	}
 
 	// Gather the entries to verify, with their position when they came from
@@ -188,7 +200,7 @@ func runVerify(args []string, stdout, stderr io.Writer, stdin io.Reader) error {
 	if input.IsEnvelope {
 		entries, err := soroauth.EnvelopeEntries(input.Envelope)
 		if err != nil {
-			return writeJSONError(stdout, *jsonFlag, newErrorf(ExitGeneralError, "%w", err))
+			return writeJSONError(stdout, jsonMode, newErrorf(ExitGeneralError, "%w", err))
 		}
 		for _, e := range entries {
 			locatedEntries = append(locatedEntries, located{entry: e.Entry, operationIndex: e.OperationIndex, entryIndex: e.EntryIndex})
@@ -202,10 +214,10 @@ func runVerify(args []string, stdout, stderr io.Writer, stdin io.Reader) error {
 	for _, item := range locatedEntries {
 		report, err := soroauth.VerifyEntry(item.entry, passphrase)
 		if err != nil {
-			return writeJSONError(stdout, *jsonFlag, newErrorf(ExitVerificationFailed, "%w", err))
+			return writeJSONError(stdout, jsonMode, newErrorf(ExitVerificationFailed, "%w", err))
 		}
 		if *validUntil != 0 && report.ValidUntilLedger != uint32(*validUntil) {
-			return writeJSONError(stdout, *jsonFlag, newErrorf(ExitVerificationFailed,
+			return writeJSONError(stdout, jsonMode, newErrorf(ExitVerificationFailed,
 				"entry carries expiration %d, but --valid-until says %d", report.ValidUntilLedger, uint32(*validUntil)))
 		}
 
@@ -220,7 +232,7 @@ func runVerify(args []string, stdout, stderr io.Writer, stdin io.Reader) error {
 		}
 	}
 
-	if *jsonFlag {
+	if jsonMode {
 		enc := json.NewEncoder(stdout)
 		enc.SetEscapeHTML(false)
 		if input.IsEnvelope {

@@ -143,6 +143,25 @@ These signers are useful when company policy requires secrets to be outside the
 application runtime, but they are not magic. They still need operational reviews
 and contract-specific validation before production use.
 
+### 6. CLI exec-based external signer (`--signer-cmd`)
+
+From the command line, `soroauth sign --signer-cmd <executable>` delegates
+signing to an external program over `stdin` and `stdout` using the same JSON
+message shapes as `remote/protocol.go`:
+
+```json
+{"version":1,"address":"G...","preimage":"<base64 HashIdPreimage>","payload":"<64-char hex sha256>"}
+```
+
+The helper writes `{"signature":"<base64 XDR ScVal>"}` (or `{"error":"..."}`) to
+`stdout`. Because the full `HashIdPreimage` is passed alongside the 32-byte
+digest, the helper can recompute the SHA-256 payload and show the operator which
+contract function, arguments, nonce, and expiration ledger they are approving.
+The CLI validates the returned `ScVal` before writing it into the authorization
+entry, distinguishes non-zero exit, timeout (`--signer-timeout`), and malformed
+output as separate errors, and strips secret-bearing variables from the helper's
+environment.
+
 ## Do not use these as blanket recommendations
 
 The following patterns are useful in local tests or in expert-controlled

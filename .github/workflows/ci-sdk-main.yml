@@ -1,0 +1,138 @@
+# Nightly: build and test against the Go SDK's default branch.
+#
+# docs/sdk-support.md sets a policy for moving the pinned SDK version, and the
+# pin moves when someone tries it. Finding out at that moment that the SDK
+# changed an XDR type is the expensive version; finding out the night it lands
+# is cheap. This job is what makes the cheap version possible.
+#
+# It is a workflow of its own, and deliberately not part of ci.yml or
+# ci-go.yml: it must be impossible for a break here to mark the pinned build
+# red. The pinned build is the thing a release is cut from and the thing a pull
+# request is judged by; this one is a lookout. Pull requests are also capped at
+# a fixed number of checks, and this is not one of them.
+#
+# What it runs is the build, the full suite and the golden vectors. The vectors
+# matter most: they are the bytes this library emits, so an SDK change that
+# moves the wire format shows up here as a vector mismatch rather than as a
+# signature a host rejects months later.
+#
+# A failure updates one rolling issue (`gh issue list` by exact title, comment
+# if it is open, create if it is not) so a bot that fails every night does not
+# file a new issue every night. A success is visible three ways, because a job
+# that only speaks up on failure is indistinguishable from one that has stopped
+# running: the run's own green conclusion, the job summary below, and the badge
+# in README.md.
+name: ci / go sdk main
+
+on:
+  schedule:
+    # Nightly at 04:00 UTC, staggered behind the nightly fuzz run (03:00) so
+    # the runners are not queued together.
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # The tracking issue is opened or commented on with the run's own token.
+  issues: write
+
+jobs:
+  sdk-main:
+    name: go-stellar-sdk@main
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          # The module declares its own floor; check-latest keeps the nightly
+          # run on the newest patch of the toolchain go.mod names.
+          go-version-file: go.mod
+          check-latest: true
+
+      # Moving the requirement without committing it. The job's checkout is
+      # throwaway, so the go.mod it edits is never pushed anywhere, and
+      # `go get` prints the version and the commit it resolved — which is the
+      # evidence the report has to carry.
+      - name: move the pin onto the SDK's default branch
+        run: |
+          go get github.com/stellar/go-stellar-sdk@main
+          go mod tidy
+          echo "### SDK revision under test" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          go list -m -json github.com/stellar/go-stellar-sdk 2>&1 | tee /tmp/sdk.json \
+            | grep -E '"(Path|Version)"' >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: build
+        run: go build ./...
+
+      - name: vet
+        run: go vet ./...
+
+      # The full suite, race detector on, exactly as the pinned build runs it.
+      - name: test
+        run: go test -race ./...
+
+      # The golden vectors are the reason this job exists. They are the bytes
+      # soroauth emits, so a wire-format change in the SDK is the finding that
+      # matters most and it lands here first.
+      - name: golden vectors still match
+        run: go test -run TestGoldenVectors -v .
+
+      # A green run has to be visible, or a job that has silently stopped is
+      # indistinguishable from a job that keeps succeeding. The badge in
+      # README.md is the outward signal; this summary is the one a reader of
+      # the run itself sees, and it is written on success as well as failure.
+      - name: record a green run
+        if: success()
+        run: |
+          {
+            echo "### go-stellar-sdk@main: green"
+            echo
+            echo "The build, the suite and the golden vectors all pass against the"
+            echo "SDK's default branch. No action needed; the pin does not move by"
+            echo "itself (docs/sdk-support.md)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # One rolling issue, not one per night. The search is by exact title so a
+      # renamed or duplicated issue cannot spawn a second tracker, and an open
+      # issue is commented on rather than replaced — the history of when main
+      # broke and recovered stays in one place.
+      - name: open or update the tracking issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          title='[sdk-main] go-stellar-sdk@main no longer builds or passes'
+
+          {
+            echo "The nightly run against \`go-stellar-sdk@main\` failed on"
+            echo "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}."
+            echo
+            echo "This does **not** mean the pinned build is broken: this job moves the"
+            echo "requirement on its own throwaway checkout, and the pin is unchanged."
+            echo "It means the SDK's default branch has something this library would have"
+            echo "to deal with before the pin could move."
+            echo
+            echo "## Reproduce locally"
+            echo
+            echo '```sh'
+            echo 'go get github.com/stellar/go-stellar-sdk@main'
+            echo 'go mod tidy'
+            echo 'go test ./...'
+            echo 'go test -run TestGoldenVectors -v .'
+            echo '```'
+            echo
+            echo "Move the pin only if the SDK's change is one this library wants; see"
+            echo "docs/sdk-support.md for what a bump has to prove."
+          } > /tmp/sdk-main-issue.md
+
+          existing=$(gh issue list --search "$title in:title" --state open \
+            --json number,title --jq --arg t "$title" '[.[] | select(.title == $t) | .number]')
+          if [ "$(echo "$existing" | jq 'length')" -gt 0 ]; then
+            echo "An open issue already tracks this; commenting with the new run."
+            echo "$existing" | jq -r '.[0]' | xargs -I{} gh issue comment {} --body-file /tmp/sdk-main-issue.md
+          else
+            gh issue create --title "$title" --body-file /tmp/sdk-main-issue.md
+          fi

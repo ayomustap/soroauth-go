@@ -28,6 +28,7 @@ on:
     branches: [main]
     paths:
       - '**.md'
+      - 'scripts/docsite/**'
       - 'lychee.toml'
       - '.github/workflows/links.yml'
   schedule:
@@ -45,6 +46,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: build and verify documentation site
+        run: go run ./scripts/docsite --out _site
 
       # --offline restricts this to links that point at files in the checkout,
       # so it exercises HEAD-relative and relative Markdown links and anchors
@@ -53,7 +61,7 @@ jobs:
         uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2
         with:
           fail: true
-          args: --offline --include-fragments --no-progress --verbose './**/*.md'
+          args: --offline --include-fragments --no-progress --verbose './**/*.md' '_site/**/*.html'
 
   external:
     name: external links resolve (reported)

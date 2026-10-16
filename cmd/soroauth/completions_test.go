@@ -497,3 +497,176 @@ func TestCompletionsThroughTheDispatcher(t *testing.T) {
 		t.Errorf("dispatcher output is not the zsh completion script:\n%.100s", stdout)
 	}
 }
+
+// TestEnumerableValuesCompleteInEveryShell proves that the three named networks
+// (testnet, futurenet, public) and every enumerable format (ascii, dot, text,
+// json) and shell (bash, zsh, fish) are present in the generated scripts for
+// all three shells and complete functionally in bash and fish.
+func TestEnumerableValuesCompleteInEveryShell(t *testing.T) {
+	for _, shell := range []string{"bash", "zsh", "fish"} {
+		script, _, err := runCompletionsCLI(t, "--shell", shell)
+		if err != nil {
+			t.Fatalf("--shell %s: %v", shell, err)
+		}
+		for _, want := range []string{
+			"testnet", "futurenet", "public",
+			"ascii", "dot", "text", "json",
+			"bash", "zsh", "fish",
+		} {
+			if !strings.Contains(script, want) {
+				t.Errorf("--shell %s script does not offer enumerable value %q", shell, want)
+			}
+		}
+	}
+
+	if bashPath, err := exec.LookPath("bash"); err == nil {
+		path := writeCompletionScript(t, "bash")
+		harness := `source "$1"
+COMP_WORDS=(soroauth sign --network ""); COMP_CWORD=3; _soroauth_completions; echo "net:${COMPREPLY[*]}"
+COMP_WORDS=(soroauth tree --format ""); COMP_CWORD=3; _soroauth_completions; echo "tree_fmt:${COMPREPLY[*]}"
+COMP_WORDS=(soroauth doctor --format ""); COMP_CWORD=3; _soroauth_completions; echo "doc_fmt:${COMPREPLY[*]}"
+`
+		out, err := exec.Command(bashPath, "-c", harness, "soroauth-test", path).CombinedOutput()
+		if err != nil {
+			t.Fatalf("bash harness failed: %v\noutput:\n%s", err, out)
+		}
+		assertLineHas(t, "bash", string(out), "net:", "testnet futurenet public")
+		assertLineHas(t, "bash", string(out), "tree_fmt:", "ascii dot")
+		assertLineHas(t, "bash", string(out), "doc_fmt:", "text json")
+	}
+
+	if fishPath, err := exec.LookPath("fish"); err == nil {
+		script := writeCompletionScript(t, "fish")
+		run := func(commandLine string) string {
+			harness := "source " + quoteFish(script) + "; complete -C " + quoteFish(commandLine)
+			out, err := exec.Command(fishPath, "-c", harness).CombinedOutput()
+			if err != nil {
+				t.Fatalf("fish %q failed: %v\noutput:\n%s", commandLine, err, out)
+			}
+			return string(out)
+		}
+		netOut := run("soroauth sign --network ")
+		for _, n := range []string{"testnet", "futurenet", "public"} {
+			assertLineHas(t, "fish", netOut, "", n)
+		}
+		treeFmtOut := run("soroauth tree --format ")
+		for _, f := range []string{"ascii", "dot"} {
+			assertLineHas(t, "fish", treeFmtOut, "", f)
+		}
+		docFmtOut := run("soroauth doctor --format ")
+		for _, f := range []string{"text", "json"} {
+			assertLineHas(t, "fish", docFmtOut, "", f)
+		}
+	}
+}
+
+// TestDynamicEntryAddressCompletion proves that addresses complete from an
+// --entry already supplied on the command line (including nested delegates),
+// and that literal network passphrases remain accepted by the CLI.
+func TestDynamicEntryAddressCompletion(t *testing.T) {
+	v := loadVector(t, "delegates_unsorted_with_nested")
+	stdout, stderr, err := runCLI(t, "__complete-addresses", "--entry", v.UnsignedEntryXDR)
+	if err != nil {
+		t.Fatalf("__complete-addresses failed: %v (stderr: %s)", err, stderr)
+	}
+	lines := strings.Fields(stdout)
+	if len(lines) < 2 {
+		t.Fatalf("expected top-level and delegate addresses, got: %v", lines)
+	}
+	for _, d := range v.Delegates {
+		found := false
+		for _, got := range lines {
+			if got == d.Address {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("delegate address %s not found in completed addresses %v", d.Address, lines)
+		}
+	}
+
+	// Also verify --entry=<b64> syntax.
+	stdoutEq, _, err := runCLI(t, "__complete-addresses", "--entry="+v.UnsignedEntryXDR)
+	if err != nil {
+		t.Fatalf("__complete-addresses --entry=... failed: %v", err)
+	}
+	if stdoutEq != stdout {
+		t.Errorf("--entry=<b64> output %q != --entry <b64> output %q", stdoutEq, stdout)
+	}
+
+	// Verify bash dynamic completion end-to-end with a wrapper script acting as
+	// COMP_WORDS[0].
+	if bashPath, err := exec.LookPath("bash"); err == nil {
+		scriptPath := writeCompletionScript(t, "bash")
+		fakeBin := filepath.Join(t.TempDir(), "soroauth-fake")
+		fakeScript := "#!/usr/bin/env sh\nprintf '%s\\n' '" + strings.Join(lines, "\n") + "'\n"
+		if err := os.WriteFile(fakeBin, []byte(fakeScript), 0o755); err != nil {
+			t.Fatalf("writing fakeBin: %v", err)
+		}
+		harness := `source "$1"
+COMP_WORDS=("$2" sign --entry "$3" --for "")
+COMP_CWORD=5
+_soroauth_completions
+echo "addrs:${COMPREPLY[*]}"
+`
+		out, err := exec.Command(bashPath, "-c", harness, "soroauth-test", scriptPath, fakeBin, v.UnsignedEntryXDR).CombinedOutput()
+		if err != nil {
+			t.Fatalf("bash dynamic address harness failed: %v\noutput:\n%s", err, out)
+		}
+		for _, d := range v.Delegates {
+			assertLineHas(t, "bash", string(out), "addrs:", d.Address)
+		}
+	}
+
+	// Literal network passphrase must remain possible (completion suggests,
+	// never constrains).
+	single := loadVector(t, "v2_single_testnet")
+	_, _, err = runCLI(t, "payload",
+		"--entry", single.UnsignedEntryXDR,
+		"--valid-until", "1234567",
+		"--network", "Standalone Network ; February 2017")
+	if err != nil {
+		t.Errorf("literal network passphrase was rejected: %v", err)
+	}
+}
+
+// TestCompletionNeverExecutesEntryContentsOrRunsSigner proves the security
+// acceptance criterion of #379: no completion path can execute an entry's
+// contents or run a signer, even when --entry contains shell command
+// substitutions or metacharacters.
+func TestCompletionNeverExecutesEntryContentsOrRunsSigner(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "must_not_exist")
+	maliciousPayload := "$(touch " + marker + "); `touch " + marker + "`; touch " + marker
+
+	stdout, stderr, err := runCLI(t, "__complete-addresses", "--entry", maliciousPayload)
+	if err != nil {
+		t.Fatalf("__complete-addresses returned error on invalid input: %v", err)
+	}
+	if stdout != "" || stderr != "" {
+		t.Errorf("expected silent no-op on malformed --entry, got stdout=%q stderr=%q", stdout, stderr)
+	}
+	if _, statErr := os.Stat(marker); !os.IsNotExist(statErr) {
+		t.Fatalf("SECURITY FAILURE: marker file %s was created during completion!", marker)
+	}
+
+	if bashPath, err := exec.LookPath("bash"); err == nil {
+		scriptPath := writeCompletionScript(t, "bash")
+		fakeBin := filepath.Join(t.TempDir(), "soroauth-noop")
+		if err := os.WriteFile(fakeBin, []byte("#!/usr/bin/env sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatalf("writing fakeBin: %v", err)
+		}
+		harness := `source "$1"
+COMP_WORDS=("$2" sign --entry "$3" --for "")
+COMP_CWORD=5
+_soroauth_completions
+`
+		out, err := exec.Command(bashPath, "-c", harness, "soroauth-test", scriptPath, fakeBin, maliciousPayload).CombinedOutput()
+		if err != nil {
+			t.Fatalf("bash harness failed: %v\noutput:\n%s", err, out)
+		}
+		if _, statErr := os.Stat(marker); !os.IsNotExist(statErr) {
+			t.Fatalf("SECURITY FAILURE: bash completion executed --entry payload and created %s!", marker)
+		}
+	}
+}

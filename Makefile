@@ -43,7 +43,7 @@ FUZZTIME ?= 30s
 # soak is not a replacement for it.
 SOAKTIME ?= 2m
 
-.PHONY: all help fmt vet test coverage fuzz soak build server man md-check md-format vectors vectors-check demo-check diagrams diagrams-check e2e clean parity parity-rust differential wasm wasm-check wasm-budget ts-test jvm-test jvm-native rust-test grpc-test grpc-check freighter-check openapi-test openapi-check action-test
+.PHONY: all help fmt vet test coverage fuzz soak build server man site md-check md-format vectors vectors-check demo-check diagrams diagrams-check e2e clean parity parity-rust differential wasm wasm-check wasm-budget ts-test jvm-test jvm-native rust-test grpc-test grpc-check freighter-check openapi-test openapi-check action-test
 
 # The default target runs exactly what a pull request has to pass before the
 # golden-vector drift check, which needs Node and the network.
@@ -63,6 +63,7 @@ help:
 	@echo "  make build         build the CLI to $(BIN)"
 	@echo "  make server        build the verification service to $(BIN_DIR)/soroauth-server"
 	@echo "  make man           build the CLI and emit its man page to $(BIN_DIR)/soroauth.1"
+	@echo "  make site          build the browsable documentation site into _site/"
 	@echo "  make vectors       regenerate testdata/vectors from the pinned reference libraries"
 	@echo "  make vectors-check regenerate and fail if the committed vectors changed"
 	@echo "  make diagrams      render docs/diagrams/*.dot to the committed SVGs"
@@ -169,6 +170,9 @@ server:
 man: build
 	$(BIN) man --out $(BIN_DIR)/soroauth.1
 	@echo "wrote $(BIN_DIR)/soroauth.1"
+
+site:
+	$(GO) run ./scripts/docsite --out _site --version $(VERSION)
 
 # Golden vectors are generated, committed artefacts. Regenerating them is safe;
 # `vectors-check` is the one that proves the committed files match, which is
@@ -381,4 +385,4 @@ wasm-budget: build wasm
 	$(BIN_DIR)/soroauth wasm-budget --out wasm/dist/soroauth.wasm
 
 clean:
-	rm -rf $(BIN_DIR) wasm/dist wasm/ts/dist wasm/ts/node_modules .venv-parity
+	rm -rf $(BIN_DIR) _site wasm/dist wasm/ts/dist wasm/ts/node_modules .venv-parity

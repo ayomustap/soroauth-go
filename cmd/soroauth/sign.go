@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/stellar/go-stellar-sdk/keypair"
 	"github.com/stellar/go-stellar-sdk/xdr"
@@ -20,21 +21,24 @@ const signUsage = `soroauth sign — sign an authorization entry.
 usage:
   soroauth sign --entry <base64|-> (--valid-until <ledger> | --valid-for <ledgers>) \
                 --network <name|passphrase> \
-                (--secret-env <VAR> | --assertion <file|->) \
-                [--rpc-url <url>] [--for <address>] [--json]
+                (--secret-env <VAR> | --assertion <file|-> | --signer-cmd <path>) \
+                [--signer-timeout <duration>] [--rpc-url <url>] [--for <address>] \
+                [--config <path>] [--json]
   soroauth sign --entries <file|-> (--valid-until <ledger> | --valid-for <ledgers>) \
                 --network <name|passphrase> \
-                (--secret-env <VAR> | --assertion <file|->) \
-                [--rpc-url <url>] [--json]
+                (--secret-env <VAR> | --assertion <file|-> | --signer-cmd <path>) \
+                [--signer-timeout <duration>] [--rpc-url <url>] [--config <path>] [--json]
 
 Give exactly one of --valid-until (an absolute ledger) or --valid-for (a
 lifetime in ledgers, added to the current ledger). --valid-for needs an RPC
-endpoint, taken from --rpc-url or, if that is unset, $SOROAUTH_RPC_URL; it is
-refused when neither names one, because guessing a network here would sign an
+endpoint, taken from --rpc-url, $SOROAUTH_RPC_URL, or the config file; it is
+refused when none names one, because guessing a network here would sign an
 expiration bound to the wrong chain.
 
 Give exactly one of --secret-env (the name of an environment variable holding an
-S… seed) or --assertion (a WebAuthn assertion, from a file or - for stdin).
+S… seed), --assertion (a WebAuthn assertion, from a file or - for stdin), or
+--signer-cmd (an external program speaking the remote signing protocol over
+stdin and stdout).
 
 Subcommands support reading entries from stdin using --entry - so commands compose in pipelines:
 
@@ -62,7 +66,8 @@ does not sign the envelope itself, which is the source account's (or the
 fee-bump fee source's) signature, not an authorization entry.
 
 The signing seed is read from the environment variable named by --secret-env,
-or a WebAuthn assertion JSON is read from a file or stdin via --assertion.
+a WebAuthn assertion JSON is read from a file or stdin via --assertion, or
+signing is delegated to an external program via --signer-cmd.
 There is deliberately no flag that takes a seed or private key as a literal value:
 flag values end up in shell history, in the process table, and in any transcript
 of the session.
@@ -102,6 +107,7 @@ func runSignWithStdin(args []string, stdout, stderr io.Writer, getenv func(strin
 		flags.PrintDefaults()
 	}
 
+	configFlag := flags.String("config", "", "path to CLI configuration file (default $SOROAUTH_CONFIG or ~/.config/soroauth/config.json)")
 	entryFlag := flags.String("entry", "", "the authorization entry or transaction envelope, as base64 XDR or -")
 	entriesFlag := flags.String("entries", "", "a file of entries to sign, one base64 entry per line, or - for stdin")
 	validUntil := flags.Uint("valid-until", 0, "the last ledger at which the signature is valid")
@@ -110,6 +116,8 @@ func runSignWithStdin(args []string, stdout, stderr io.Writer, getenv func(strin
 	networkFlag := flags.String("network", "", "testnet, futurenet, public, or a literal network passphrase")
 	secretEnv := flags.String("secret-env", "", "name of the environment variable holding the signing seed (S…)")
 	assertionFlag := flags.String("assertion", "", "path to a WebAuthn assertion JSON file, or - for stdin")
+	signerCmd := flags.String("signer-cmd", "", "path to an external signer executable speaking the remote protocol over stdin/stdout")
+	signerTimeout := flags.Duration("signer-timeout", defaultExecSignerTimeout, "timeout for the external signer executable")
 	forAddress := flags.String("for", "", "credential node to sign, when it is not the signer's own address")
 	jsonFlag := flags.Bool("json", false, "output as JSON")
 
@@ -117,75 +125,120 @@ func runSignWithStdin(args []string, stdout, stderr io.Writer, getenv func(strin
 		return newErrorf(ExitUsageError, "%w", err)
 	}
 
+	set := visitedFlags(flags)
+	cfg, err := loadConfig(*configFlag, getenv)
+	if err != nil {
+		return writeJSONError(stdout, *jsonFlag, err)
+	}
+	jsonMode, err := resolveJSONMode(set, *jsonFlag, getenv, cfg)
+	if err != nil {
+		return writeJSONError(stdout, *jsonFlag, err)
+	}
+
 	if *entryFlag != "" && *entriesFlag != "" {
-		return writeJSONError(stdout, *jsonFlag,
+		return writeJSONError(stdout, jsonMode,
 			newErrorf(ExitUsageError, "--entry and --entries are mutually exclusive"))
 	}
 	if *entryFlag == "" && *entriesFlag == "" {
-		return writeJSONError(stdout, *jsonFlag,
+		return writeJSONError(stdout, jsonMode,
 			newErrorf(ExitUsageError, "--entry or --entries is required"))
 	}
 	// --for names one credential node of one entry, and a batch has many, so
 	// the target would be ambiguous. Refusing is the fail-closed reading, as
 	// it is for an envelope below.
 	if *entriesFlag != "" && *forAddress != "" {
-		return writeJSONError(stdout, *jsonFlag, newErrorf(ExitUsageError,
+		return writeJSONError(stdout, jsonMode, newErrorf(ExitUsageError,
 			"--for applies to a single entry; it cannot be combined with --entries"))
 	}
 
-	passphrase, err := resolveNetwork(*networkFlag)
+	resolvedNet := resolveNetworkValue(set, *networkFlag, getenv, cfg).Value
+	passphrase, err := resolveNetwork(resolvedNet)
 	if err != nil {
-		return writeJSONError(stdout, *jsonFlag, err)
+		return writeJSONError(stdout, jsonMode, err)
 	}
-	expiration, err := resolveValidUntil(context.Background(), uint64(*validUntil), *validFor, resolveRPCURL(*rpcURL, getenv), fetchLatestLedger)
+	resolvedRPC := resolveRPCURLValue(set, *rpcURL, getenv, cfg, "").Value
+	expiration, err := resolveValidUntil(context.Background(), uint64(*validUntil), *validFor, resolvedRPC, fetchLatestLedger)
 	if err != nil {
-		return writeJSONError(stdout, *jsonFlag, err)
+		return writeJSONError(stdout, jsonMode, err)
 	}
-	signer, err := resolveSigner(getenv, *secretEnv, *assertionFlag)
+
+	effectiveSecretEnv := *secretEnv
+	if !set["secret-env"] && !set["assertion"] && !set["signer-cmd"] {
+		effectiveSecretEnv = resolveSecretEnvValue(set, *secretEnv, getenv, cfg).Value
+	}
+	signer, err := resolveSigner(getenv, effectiveSecretEnv, *assertionFlag, *signerCmd, *forAddress, *signerTimeout)
 	if err != nil {
-		return writeJSONError(stdout, *jsonFlag, err)
+		return writeJSONError(stdout, jsonMode, err)
 	}
 
 	if *entriesFlag != "" {
-		return runSignBatch(stdout, *entriesFlag, stdin, signer, expiration, passphrase, *jsonFlag)
+		return runSignBatch(stdout, *entriesFlag, stdin, signer, expiration, passphrase, jsonMode)
 	}
 
 	resolvedEntry, err := resolveEntryArg(*entryFlag, stdin)
 	if err != nil {
-		return writeJSONError(stdout, *jsonFlag, err)
+		return writeJSONError(stdout, jsonMode, err)
 	}
 
 	input, err := decodeEntryOrEnvelopeFrom(resolvedEntry, stdin)
 	if err != nil {
-		return writeJSONError(stdout, *jsonFlag, err)
+		return writeJSONError(stdout, jsonMode, err)
 	}
 
 	// An envelope carries entries for whatever addresses simulation recorded,
 	// so a single target address would be ambiguous: it would have to apply to
 	// one of them and not the others. Refusing is the fail-closed reading.
 	if input.IsEnvelope && *forAddress != "" {
-		return writeJSONError(stdout, *jsonFlag, newErrorf(ExitUsageError,
+		return writeJSONError(stdout, jsonMode, newErrorf(ExitUsageError,
 			"--for applies to a single entry; given an envelope, sign the entries one at a time or drop --for"))
 	}
 
 	if input.IsEnvelope {
+		signers := []soroauth.Signer{signer}
+		if ext, ok := signer.(*execSigner); ok && ext.Address() == "" {
+			entries, err := soroauth.EnvelopeEntries(input.Envelope)
+			if err != nil {
+				return writeJSONError(stdout, jsonMode, newErrorf(exitCodeForSigningError(err), "%w", err))
+			}
+			signers = nil
+			seen := make(map[string]bool)
+			for _, loc := range entries {
+				addr, err := inferSingleEntryAddress(loc.Entry)
+				if err != nil {
+					return writeJSONError(stdout, jsonMode, err)
+				}
+				if addr != "" && !seen[addr] {
+					seen[addr] = true
+					signers = append(signers, ext.withAddress(addr))
+				}
+			}
+		}
+
 		signed, err := soroauth.AuthorizeEnvelope(context.Background(), input.Envelope,
-			[]soroauth.Signer{signer}, expiration, passphrase)
+			signers, expiration, passphrase)
 		if err != nil {
-			return writeJSONError(stdout, *jsonFlag, newErrorf(exitCodeForSigningError(err), "%w", err))
+			return writeJSONError(stdout, jsonMode, newErrorf(exitCodeForSigningError(err), "%w", err))
 		}
 
 		encoded, err := xdr.MarshalBase64(signed)
 		if err != nil {
-			return writeJSONError(stdout, *jsonFlag, newErrorf(ExitGeneralError, "encoding the signed envelope: %w", err))
+			return writeJSONError(stdout, jsonMode, newErrorf(ExitGeneralError, "encoding the signed envelope: %w", err))
 		}
-		if *jsonFlag {
+		if jsonMode {
 			enc := json.NewEncoder(stdout)
 			enc.SetEscapeHTML(false)
 			return enc.Encode(signOutput{SignedEnvelope: encoded})
 		}
 		fmt.Fprintln(stdout, encoded)
 		return nil
+	}
+
+	if ext, ok := signer.(*execSigner); ok && ext.Address() == "" {
+		addr, err := inferSingleEntryAddress(input.Entry)
+		if err != nil {
+			return writeJSONError(stdout, jsonMode, err)
+		}
+		signer = ext.withAddress(addr)
 	}
 
 	var opts []soroauth.AuthorizeOption
@@ -196,15 +249,15 @@ func runSignWithStdin(args []string, stdout, stderr io.Writer, getenv func(strin
 	signed, err := soroauth.AuthorizeEntry(context.Background(), input.Entry,
 		signer, expiration, passphrase, opts...)
 	if err != nil {
-		return writeJSONError(stdout, *jsonFlag, newErrorf(exitCodeForSigningError(err), "%w", err))
+		return writeJSONError(stdout, jsonMode, newErrorf(exitCodeForSigningError(err), "%w", err))
 	}
 
 	encoded, err := encodeEntry(signed)
 	if err != nil {
-		return writeJSONError(stdout, *jsonFlag, newErrorf(ExitGeneralError, "%w", err))
+		return writeJSONError(stdout, jsonMode, newErrorf(ExitGeneralError, "%w", err))
 	}
 
-	if *jsonFlag {
+	if jsonMode {
 		out := signOutput{SignedEntry: encoded}
 		enc := json.NewEncoder(stdout)
 		enc.SetEscapeHTML(false)
@@ -217,12 +270,26 @@ func runSignWithStdin(args []string, stdout, stderr io.Writer, getenv func(strin
 
 // resolveSigner turns the signer flags into a Signer. Exactly one of
 // --secret-env (the name of an environment variable holding a seed, never the
-// seed itself) or --assertion must be given; anything else is a usage error,
-// including both at once, because precedence between two credentials would
-// hide which one signed.
-func resolveSigner(getenv func(string) string, secretEnv, assertion string) (soroauth.Signer, error) {
-	if (secretEnv == "" && assertion == "") || (secretEnv != "" && assertion != "") {
-		return nil, newErrorf(ExitUsageError, "--secret-env is required unless --assertion is given: exactly one of --secret-env or --assertion must be provided")
+// seed itself), --assertion, or --signer-cmd must be given; anything else is a
+// usage error, including more than one at once, because precedence between two
+// credentials would hide which one signed.
+func resolveSigner(getenv func(string) string, secretEnv, assertion, signerCmd, forAddress string, signerTimeout time.Duration) (soroauth.Signer, error) {
+	count := 0
+	if secretEnv != "" {
+		count++
+	}
+	if assertion != "" {
+		count++
+	}
+	if signerCmd != "" {
+		count++
+	}
+	if count != 1 {
+		return nil, newErrorf(ExitUsageError, "--secret-env is required unless --assertion or --signer-cmd is given: exactly one of --secret-env or --assertion must be provided (or --signer-cmd)")
+	}
+
+	if signerCmd != "" {
+		return newExecSigner(signerCmd, forAddress, signerTimeout, getenv)
 	}
 
 	if secretEnv == "" {
@@ -230,6 +297,25 @@ func resolveSigner(getenv func(string) string, secretEnv, assertion string) (sor
 		return nil, newErrorf(ExitUsageError, "passkey authentication is not yet supported")
 	}
 
+	full, err := resolveSeedKeypair(getenv, secretEnv)
+	if err != nil {
+		return nil, err
+	}
+	return soroauth.NewEd25519Signer(full), nil
+}
+
+// resolveSeedKeypair reads the seed named by secretEnv out of the environment
+// and parses it, refusing anything that is not a secret seed.
+//
+// It is separate from resolveSigner because the submit subcommand needs the
+// keypair itself — it signs the transaction envelope, which is a keypair's job
+// and not a Signer's — and because keeping the three refusals in one place is
+// what makes them say the same thing whichever subcommand hit them: an unset
+// variable, a value that is not a Stellar key, and a public key offered where
+// a secret seed belongs are three different mistakes with three different
+// fixes, and the last one is the one a caller gets wrong by pasting the wrong
+// half of a keypair.
+func resolveSeedKeypair(getenv func(string) string, secretEnv string) (*keypair.Full, error) {
 	seed := getenv(secretEnv)
 	if seed == "" {
 		return nil, newErrorf(ExitUsageError, "environment variable %s is empty or unset", secretEnv)
@@ -243,7 +329,7 @@ func resolveSigner(getenv func(string) string, secretEnv, assertion string) (sor
 	if !ok {
 		return nil, newErrorf(ExitUsageError, "the value of %s is a public key; a secret seed (S…) is required", secretEnv)
 	}
-	return soroauth.NewEd25519Signer(full), nil
+	return full, nil
 }
 
 // runSignBatch signs every input in a batch file, or none of them.
@@ -271,7 +357,17 @@ func runSignBatch(stdout io.Writer, entriesFlag string, stdin io.Reader, signer 
 			continue
 		}
 
-		signed, err := soroauth.AuthorizeEntry(context.Background(), in.Entry, signer, expiration, passphrase)
+		entrySigner := signer
+		if ext, ok := signer.(*execSigner); ok && ext.Address() == "" {
+			addr, err := inferSingleEntryAddress(in.Entry)
+			if err != nil {
+				run.fail(in.Index, err)
+				continue
+			}
+			entrySigner = ext.withAddress(addr)
+		}
+
+		signed, err := soroauth.AuthorizeEntry(context.Background(), in.Entry, entrySigner, expiration, passphrase)
 		if err != nil {
 			run.fail(in.Index, newErrorf(exitCodeForSigningError(err), "%w", err))
 			continue
@@ -311,7 +407,8 @@ func exitCodeForSigningError(err error) int {
 		errors.Is(err, soroauth.ErrDuplicateDelegate),
 		errors.Is(err, soroauth.ErrMissingSigner),
 		errors.Is(err, soroauth.ErrNoInvokeOperation),
-		errors.Is(err, soroauth.ErrUnsupportedEnvelope):
+		errors.Is(err, soroauth.ErrUnsupportedEnvelope),
+		errors.Is(err, errExecSignerRefused):
 		return ExitSigningRefusal
 	case errors.Is(err, soroauth.ErrSignatureMismatch),
 		errors.Is(err, soroauth.ErrInvalidExpiration),

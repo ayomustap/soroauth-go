@@ -54,7 +54,7 @@ exit codes:
   2  usage error (missing --entry/--entries or malformed input)
 `
 
-func runInspect(args []string, stdout, stderr io.Writer, stdin io.Reader) error {
+func runInspect(args []string, stdout, stderr io.Writer, getenv func(string) string, stdin io.Reader) error {
 	flags := flag.NewFlagSet("inspect", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	flags.Usage = func() {
@@ -63,6 +63,7 @@ func runInspect(args []string, stdout, stderr io.Writer, stdin io.Reader) error 
 		flags.PrintDefaults()
 	}
 
+	configFlag := flags.String("config", "", "path to CLI configuration file (default $SOROAUTH_CONFIG or ~/.config/soroauth/config.json)")
 	entryFlag := flags.String("entry", "", "the authorization entry or transaction envelope, as base64 XDR")
 	entriesFlag := flags.String("entries", "", "a file of entries to inspect, one base64 entry per line, or - for stdin")
 	// inspect's success output is already the JSON report described above;
@@ -76,21 +77,31 @@ func runInspect(args []string, stdout, stderr io.Writer, stdin io.Reader) error 
 		return newErrorf(ExitUsageError, "%w", err)
 	}
 
+	set := visitedFlags(flags)
+	cfg, err := loadConfig(*configFlag, getenv)
+	if err != nil {
+		return writeJSONError(stdout, *jsonFlag, err)
+	}
+	jsonMode, err := resolveJSONMode(set, *jsonFlag, getenv, cfg)
+	if err != nil {
+		return writeJSONError(stdout, *jsonFlag, err)
+	}
+
 	if *entryFlag != "" && *entriesFlag != "" {
-		return writeJSONError(stdout, *jsonFlag,
+		return writeJSONError(stdout, jsonMode,
 			newErrorf(ExitUsageError, "--entry and --entries are mutually exclusive"))
 	}
 	if *entriesFlag != "" {
-		return runInspectBatch(stdout, stderr, *entriesFlag, stdin, *jsonFlag)
+		return runInspectBatch(stdout, stderr, *entriesFlag, stdin, jsonMode)
 	}
 	if *entryFlag == "" {
-		return writeJSONError(stdout, *jsonFlag,
+		return writeJSONError(stdout, jsonMode,
 			newErrorf(ExitUsageError, "--entry or --entries is required"))
 	}
 
 	input, err := decodeEntryOrEnvelopeFrom(*entryFlag, stdin)
 	if err != nil {
-		return writeJSONError(stdout, *jsonFlag, newErrorf(ExitUsageError, "%w", err))
+		return writeJSONError(stdout, jsonMode, newErrorf(ExitUsageError, "%w", err))
 	}
 
 	// An envelope is reported entry by entry, each with the position it came
@@ -101,13 +112,13 @@ func runInspect(args []string, stdout, stderr io.Writer, stdin io.Reader) error 
 	if input.IsEnvelope {
 		infos, err := soroauth.InspectEnvelope(input.Envelope)
 		if err != nil {
-			return writeJSONError(stdout, *jsonFlag, newErrorf(ExitGeneralError, "%w", err))
+			return writeJSONError(stdout, jsonMode, newErrorf(ExitGeneralError, "%w", err))
 		}
 		report = infos
 	} else {
 		info, err := soroauth.Inspect(input.Entry)
 		if err != nil {
-			return writeJSONError(stdout, *jsonFlag, newErrorf(ExitGeneralError, "%w", err))
+			return writeJSONError(stdout, jsonMode, newErrorf(ExitGeneralError, "%w", err))
 		}
 		report = info
 	}
@@ -118,7 +129,7 @@ func runInspect(args []string, stdout, stderr io.Writer, stdin io.Reader) error 
 	// --json existed keep getting byte-identical output.
 	encoded, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
-		return writeJSONError(stdout, *jsonFlag, newErrorf(ExitGeneralError, "encoding the report: %w", err))
+		return writeJSONError(stdout, jsonMode, newErrorf(ExitGeneralError, "encoding the report: %w", err))
 	}
 	fmt.Fprintln(stdout, string(encoded))
 	return nil

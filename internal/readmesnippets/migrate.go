@@ -25,9 +25,10 @@ func MigrateBaselineAndCompare(
 	networkPassphrase string,
 ) (bool, error) {
 	// snippet:start migrate-verify
-	// The old code's output, captured once and frozen as the baseline.
-	var baseline xdr.SorobanAuthorizationEntry
-	if err := xdr.SafeUnmarshalBase64(baselineB64, &baseline); err != nil {
+	// The old code's output, captured once and frozen as the baseline. It is a
+	// blob from outside this program, so it is decoded at the library's bound.
+	baseline, err := soroauth.DecodeAuthorizationEntry(baselineB64)
+	if err != nil {
 		return false, err
 	}
 
@@ -61,8 +62,8 @@ func MigrateBaselineAndCompare(
 // relate to markdown fenced blocks.
 func MigrateInspectBaseline(baselineB64 string) error {
 	// snippet:start migrate-inspect
-	var baseline xdr.SorobanAuthorizationEntry
-	if err := xdr.SafeUnmarshalBase64(baselineB64, &baseline); err != nil {
+	baseline, err := soroauth.DecodeAuthorizationEntry(baselineB64)
+	if err != nil {
 		return err
 	}
 	oldInfo, err := soroauth.Inspect(baseline)

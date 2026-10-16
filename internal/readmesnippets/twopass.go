@@ -15,6 +15,12 @@ import (
 // compiled, so the README's example cannot rot. The parameters stand in for
 // values a real caller already has: the RPC client, the signed entries from
 // soroauth, the operation they authorize, and the payer account.
+//
+// decode-allow: the base64 blob it decodes is the SorobanTransactionData in
+// the response to the enforcing simulation this function just issued, not a
+// caller-supplied blob, and soroauth publishes no bounded decoder for that
+// type — its bound covers authorization entries and the envelopes that carry
+// them.
 func TwoPassEnforceAndAssemble(
 	ctx context.Context,
 	client interface {

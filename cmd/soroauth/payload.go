@@ -19,7 +19,7 @@ const payloadUsage = `soroauth payload — print the signing preimage and payloa
 
 usage:
   soroauth payload --entry <base64|-> (--valid-until <ledger> | --valid-for <ledgers>) \
-                   --network <name|passphrase> [--rpc-url <url>] [--json]
+                   --network <name|passphrase> [--rpc-url <url>] [--config <path>] [--json]
 
 Give exactly one of --valid-until (an absolute ledger) or --valid-for (a
 lifetime in ledgers, added to the current ledger). --valid-for needs an RPC
@@ -82,6 +82,7 @@ func runPayloadWithStdin(args []string, stdout, stderr io.Writer, getenv func(st
 		flags.PrintDefaults()
 	}
 
+	configFlag := flags.String("config", "", "path to CLI configuration file (default $SOROAUTH_CONFIG or ~/.config/soroauth/config.json)")
 	entryFlag := flags.String("entry", "", "the authorization entry or transaction envelope, as base64 XDR or -")
 	validUntil := flags.Uint("valid-until", 0, "the last ledger at which the signature is valid")
 	validFor := flags.Uint64("valid-for", 0, "the signature lifetime in ledgers, resolved against the current ledger (needs --rpc-url)")
@@ -93,26 +94,38 @@ func runPayloadWithStdin(args []string, stdout, stderr io.Writer, getenv func(st
 		return newErrorf(ExitUsageError, "%w", err)
 	}
 
-	resolvedEntry, err := resolveEntryArg(*entryFlag, stdin)
+	set := visitedFlags(flags)
+	cfg, err := loadConfig(*configFlag, getenv)
 	if err != nil {
 		return writeJSONError(stdout, *jsonFlag, err)
+	}
+	jsonMode, err := resolveJSONMode(set, *jsonFlag, getenv, cfg)
+	if err != nil {
+		return writeJSONError(stdout, *jsonFlag, err)
+	}
+
+	resolvedEntry, err := resolveEntryArg(*entryFlag, stdin)
+	if err != nil {
+		return writeJSONError(stdout, jsonMode, err)
 	}
 
 	input, err := decodeEntryOrEnvelope(resolvedEntry)
 	if err != nil {
-		return writeJSONError(stdout, *jsonFlag, err)
+		return writeJSONError(stdout, jsonMode, err)
 	}
-	passphrase, err := resolveNetwork(*networkFlag)
+	resolvedNet := resolveNetworkValue(set, *networkFlag, getenv, cfg).Value
+	passphrase, err := resolveNetwork(resolvedNet)
 	if err != nil {
-		return writeJSONError(stdout, *jsonFlag, err)
+		return writeJSONError(stdout, jsonMode, err)
 	}
-	expiration, err := resolveValidUntil(context.Background(), uint64(*validUntil), *validFor, resolveRPCURL(*rpcURL, getenv), fetchLatestLedger)
+	resolvedRPC := resolveRPCURLValue(set, *rpcURL, getenv, cfg, "").Value
+	expiration, err := resolveValidUntil(context.Background(), uint64(*validUntil), *validFor, resolvedRPC, fetchLatestLedger)
 	if err != nil {
-		return writeJSONError(stdout, *jsonFlag, err)
+		return writeJSONError(stdout, jsonMode, err)
 	}
 
 	if input.IsEnvelope {
-		return runPayloadEnvelope(stdout, input.Envelope, expiration, passphrase, *jsonFlag)
+		return runPayloadEnvelope(stdout, input.Envelope, expiration, passphrase, jsonMode)
 	}
 
 	preimage, err := soroauth.Preimage(input.Entry, expiration, passphrase)
@@ -124,18 +137,18 @@ func runPayloadWithStdin(args []string, stdout, stderr io.Writer, getenv func(st
 		} else {
 			exitCode = ExitVerificationFailed
 		}
-		return writeJSONError(stdout, *jsonFlag, newErrorf(exitCode, "%w", err))
+		return writeJSONError(stdout, jsonMode, newErrorf(exitCode, "%w", err))
 	}
 	payload, err := soroauth.Payload(preimage)
 	if err != nil {
-		return writeJSONError(stdout, *jsonFlag, newErrorf(ExitGeneralError, "%w", err))
+		return writeJSONError(stdout, jsonMode, newErrorf(ExitGeneralError, "%w", err))
 	}
 	encoded, err := xdr.MarshalBase64(preimage)
 	if err != nil {
-		return writeJSONError(stdout, *jsonFlag, newErrorf(ExitGeneralError, "encoding the preimage: %w", err))
+		return writeJSONError(stdout, jsonMode, newErrorf(ExitGeneralError, "encoding the preimage: %w", err))
 	}
 
-	if *jsonFlag {
+	if jsonMode {
 		out := payloadOutput{Preimage: encoded, Payload: hex.EncodeToString(payload[:])}
 		enc := json.NewEncoder(stdout)
 		enc.SetEscapeHTML(false)

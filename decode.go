@@ -92,6 +92,56 @@ func DecodeAuthorizationEntry(encoded string) (xdr.SorobanAuthorizationEntry, er
 	return entry, nil
 }
 
+// DecodeTransactionEnvelope decodes a base64 XDR TransactionEnvelope that
+// came from somewhere else.
+//
+// It is DecodeAuthorizationEntry's counterpart for the other shape the CLI and
+// the verification surfaces accept, and it exists for the same reason: an
+// envelope handed to this library — from a simulation, from a wallet, from a
+// command line — is untrusted input, and xdr.SafeUnmarshalBase64 applies
+// go-xdr's default limits (a maximum depth of 1500, and a MaxInputLen taken
+// from the input itself, so it can never refuse an input for being too long)
+// rather than a bound chosen for this case. It applies the limits documented on
+// MaxDecodeDepth and MaxDecodeInputBytes, and reports a refusal as
+// ErrDecodeLimit.
+//
+// The limits are the same ones the entry decoder uses, because they bound the
+// same thing: how much of a process an untrusted blob may consume. The input
+// bound is on the decoded size, and a Soroban transaction carrying an
+// authorization entry is far below it.
+//
+// This function does not change the bytes of a valid envelope: it decodes the
+// same value xdr.SafeUnmarshalBase64 would, and re-encoding it reproduces the
+// input.
+func DecodeTransactionEnvelope(encoded string) (xdr.TransactionEnvelope, error) {
+	if encoded == "" {
+		return xdr.TransactionEnvelope{}, fmt.Errorf(
+			"soroauth: decode transaction envelope: input is empty")
+	}
+
+	if len(encoded) > base64.StdEncoding.EncodedLen(MaxDecodeInputBytes) {
+		return xdr.TransactionEnvelope{}, fmt.Errorf(
+			"soroauth: decode transaction envelope: %d base64 bytes exceeds the %d-byte decoded limit: %w",
+			len(encoded), MaxDecodeInputBytes, ErrDecodeLimit)
+	}
+
+	var envelope xdr.TransactionEnvelope
+	err := xdr.SafeUnmarshalBase64WithOptions(encoded, &envelope, xdr.DecodeOptions{
+		MaxDepth: MaxDecodeDepth,
+	})
+	if err != nil {
+		if errors.Is(err, xdr.ErrMaxDecodingDepthReached) {
+			return xdr.TransactionEnvelope{}, fmt.Errorf(
+				"soroauth: decode transaction envelope: nesting exceeds the %d-level limit: %w",
+				MaxDecodeDepth, ErrDecodeLimit)
+		}
+		return xdr.TransactionEnvelope{}, fmt.Errorf(
+			"soroauth: decode transaction envelope: %w", err)
+	}
+
+	return envelope, nil
+}
+
 // checkTraversalDepth guards the recursive walks over an already-decoded entry.
 //
 // A decoded entry is bounded by whatever decoder produced it. A caller that
