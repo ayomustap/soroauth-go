@@ -31,9 +31,9 @@ new field is an added key, not a new calling convention — and it keeps the
 policy in one place. `kind` is the Go sentinel the failure wraps, so a binding
 can raise a typed exception (`MissingSigner`, `AlreadySigned`,
 `TooManySignatures`, …) instead of string-matching a message; it is `ERROR` when
-the failure was not one of the exported sentinels, which is what a malformed
-XDR blob is. A binding that flattened all of those into one error would throw
-away facts its callers need.
+the failure was not one of the exported sentinels, which is what a malformed XDR
+blob is. A binding that flattened all of those into one error would throw away
+facts its callers need.
 
 Nothing here decides anything: each function decodes its input, calls the same
 `github.com/soroauth/soroauth-go` code the CLI and the wasm module call, and
@@ -43,19 +43,19 @@ signing logic to disagree with the first.
 
 ## Functions
 
-| Symbol                          | Purpose                                                        |
-| ------------------------------- | -------------------------------------------------------------- |
-| `SoroauthVersion`               | The ABI version string, e.g. `soroauth-c-0.1.0`                |
-| `SoroauthPreimage`              | `HashIdPreimage` + payload for an address entry                |
-| `SoroauthPayload`               | Payload of an already-built preimage                           |
-| `SoroauthWriteSignature`        | Write an externally produced signature ScVal onto the nodes    |
-| `SoroauthAuthorizeWithSeed`     | Sign with one 32-byte ed25519 seed                             |
-| `SoroauthAuthorizeWithSeeds`    | Sign with 1..20 seeds (`AccountMultiSigner` when more than one) |
-| `SoroauthInspect`               | `EntryInfo` as JSON                                            |
-| `SoroauthAnalyze`               | Risk findings as JSON                                          |
-| `SoroauthRenderInvocations`     | The invocation tree, ASCII                                     |
-| `SoroauthRenderTree`            | The credential/delegate tree, ASCII                            |
-| `SoroauthFree`                  | Release any string this library returned                       |
+| Symbol                       | Purpose                                                         |
+| ---------------------------- | --------------------------------------------------------------- |
+| `SoroauthVersion`            | The ABI version string, e.g. `soroauth-c-0.1.0`                 |
+| `SoroauthPreimage`           | `HashIdPreimage` + payload for an address entry                 |
+| `SoroauthPayload`            | Payload of an already-built preimage                            |
+| `SoroauthWriteSignature`     | Write an externally produced signature ScVal onto the nodes     |
+| `SoroauthAuthorizeWithSeed`  | Sign with one 32-byte ed25519 seed                              |
+| `SoroauthAuthorizeWithSeeds` | Sign with 1..20 seeds (`AccountMultiSigner` when more than one) |
+| `SoroauthInspect`            | `EntryInfo` as JSON                                             |
+| `SoroauthAnalyze`            | Risk findings as JSON                                           |
+| `SoroauthRenderInvocations`  | The invocation tree, ASCII                                      |
+| `SoroauthRenderTree`         | The credential/delegate tree, ASCII                             |
+| `SoroauthFree`               | Release any string this library returned                        |
 
 The multi-seed function exists so the multi-signature path is proved through the
 binding rather than reimplemented in each language: `AccountMultiSigner` is a
