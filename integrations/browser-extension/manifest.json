@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "soroauth — explain an entry before signing",
+  "version": "0.1.0",
+  "description": "Reference extension: shows the structure of a Soroban authorization entry, and the risk analyzer's findings, before a signing request is approved. It reports structure only; it does not interpret what a contract call will do.",
+  "minimum_chrome_version": "111",
+  "action": {
+    "default_popup": "src/popup.html",
+    "default_title": "Explain a Soroban authorization entry"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://localhost/*", "http://127.0.0.1/*", "https://localhost/*"],
+      "js": ["src/content.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "src/injected.js",
+        "src/report.js",
+        "src/overlay.js",
+        "vendor/index.js",
+        "vendor/soroauth.wasm",
+        "vendor/wasm_exec.js"
+      ],
+      "matches": ["http://localhost/*", "http://127.0.0.1/*", "https://localhost/*"]
+    }
+  ]
+}

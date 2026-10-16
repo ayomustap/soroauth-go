@@ -1,0 +1,122 @@
+# The multi-architecture container image.
+#
+# Advisory: it does not run on pull requests (only the two jobs the branch
+# ruleset requires do, so a contributor sees two checks rather than a wall of
+# them). It runs when the image's inputs reach main, and on demand from the
+# Actions tab.
+#
+# It builds the same Dockerfile the release publishes for linux/amd64 and
+# linux/arm64 and runs the CLI on both, so an arm64 image that builds but does
+# not execute fails here instead of on a consumer's machine. The release
+# workflow (.github/workflows/release.yml) builds, signs, attests and publishes
+# the same two platforms; this is the half that runs without a registry.
+name: ci / image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Dockerfile'
+      - 'cmd/**'
+      - '*.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'testdata/vectors/**'
+      # A workflow's own definition is in its paths, so an edit to this file
+      # re-runs it. Without this line a change to this workflow cannot validate
+      # itself.
+      - '.github/workflows/ci-image.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  multi-arch:
+    name: build and run the CLI on amd64 and arm64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # QEMU is what lets the amd64 runner execute the arm64 image below.
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # --load is per-platform: a manifest list cannot be loaded into the local
+      # image store, so each platform is built on its own here and the
+      # two-platform index is built separately below.
+      - name: build and load each platform
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            docker buildx build \
+              --platform "linux/${arch}" \
+              --load \
+              --tag "soroauth:test-${arch}" .
+          done
+      - name: the CLI runs and reports its version on each platform
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            echo "== linux/${arch}"
+            docker run --rm --platform "linux/${arch}" "soroauth:test-${arch}" --version
+          done
+      # Running --version proves the binary starts; this proves it still
+      # produces the bytes the vectors record, on both architectures. The
+      # entry and the expected payload are lifted from the committed vector
+      # rather than copied into this file, so they cannot drift from it.
+      - name: the CLI inspects a golden vector on each platform
+        run: |
+          set -euo pipefail
+          entry="$(jq -r .unsigned_entry_xdr testdata/vectors/v2_single_testnet.json)"
+          payload="$(jq -r .payload_hex testdata/vectors/v2_single_testnet.json)"
+          for arch in amd64 arm64; do
+            echo "== linux/${arch}"
+            docker run --rm --platform "linux/${arch}" "soroauth:test-${arch}" \
+              inspect --entry "$entry" --json |
+              jq -e '.credential_type == "address_v2"' >/dev/null
+            docker run --rm --platform "linux/${arch}" "soroauth:test-${arch}" \
+              payload --entry "$entry" --valid-until 1234567 --network testnet --json |
+              jq -e --arg p "$payload" '.payload == $p' >/dev/null
+          done
+      # The release publishes a manifest list rather than one platform, so this
+      # builds the same two-platform index and asserts the archive carries
+      # both. A Dockerfile that only ever builds one platform fails here.
+      - name: the two-platform index builds and covers both architectures
+        run: |
+          set -euo pipefail
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --output "type=oci,dest=/tmp/soroauth-index.tar" .
+          rm -rf /tmp/oci-index && mkdir -p /tmp/oci-index
+          tar -xf /tmp/soroauth-index.tar -C /tmp/oci-index
+          # The buildx OCI archive nests the image index inside the top-level
+          # index.json, so the platform descriptors are one level down. Walk it
+          # rather than grepping a flat string: the layout is not this file's
+          # to assume.
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          root = pathlib.Path("/tmp/oci-index")
+          arches: set[str] = set()
+
+
+          def collect(descriptors):
+              for d in descriptors:
+                  platform = d.get("platform") or {}
+                  if platform.get("architecture"):
+                      arches.add(platform["architecture"])
+                  if d.get("mediaType") == "application/vnd.oci.image.index.v1+json":
+                      blob = root / "blobs" / "sha256" / d["digest"].split(":")[1]
+                      collect(json.loads(blob.read_text())["manifests"])
+
+
+          collect(json.loads((root / "index.json").read_text())["manifests"])
+          print("architectures in the built index:", sorted(arches))
+          missing = {"amd64", "arm64"} - arches
+          if missing:
+              print(f"the built index is missing {sorted(missing)}", file=sys.stderr)
+              sys.exit(1)
+          PY

@@ -1,0 +1,78 @@
+# Node binding: builds the C ABI shared library and the N-API addon, then
+# replays every golden vector through the Node API.
+#
+# The replay is the gate. A native binding that can disagree with the Go library
+# is worse than none, so each runner builds its own platform's pair from source
+# and checks the bytes the JS reference implementation recorded -- on both
+# supported operating systems and on both supported Node lines, because "it
+# works on the machine I was using" is not a claim about a published package.
+#
+# Runs when the binding or anything it is proved against changes.
+name: ci / node
+
+on:
+  # Advisory checks do not run on pull requests. Only the two jobs the branch
+  # ruleset requires do, so a contributor sees two checks and not a wall of
+  # them. These run when the change reaches main, and can be run by hand from
+  # the Actions tab at any time.
+  push:
+    branches: [main]
+    paths:
+      - "bindings/node/**"
+      - "bindings/c/**"
+      - "testdata/vectors/**"
+      - "testdata/gen/**"
+      # A workflow's own definition is in its paths, so an edit to this file
+      # re-runs it. Without this line a change to this workflow cannot validate
+      # itself.
+      - ".github/workflows/ci-node.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  node:
+    name: node binding (${{ matrix.os }}, node ${{ matrix.node }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # Linux and macOS are the platforms the addon loads the Go shared
+        # library on (dlopen; Windows is not supported). 22 and 24 are the
+        # Node lines this package supports -- see bindings/node/README.md.
+        os: [ubuntu-latest, macos-latest]
+        node: ["22", "24"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: bindings/node/package-lock.json
+      # The Go shared library and the addon are build output, never committed:
+      # each runner builds its own platform's pair, so the replay is against a
+      # binary that was just produced rather than a checked-in one.
+      - name: build the binding
+        working-directory: bindings/node
+        run: |
+          npm ci
+          npm run build
+      - name: replay every golden vector through the node api
+        working-directory: bindings/node
+        run: npm test
+      # One artifact per platform (the Node dimension produces the same binary
+      # twice, because N-API's ABI does not vary with the Node version). The
+      # release workflow downloads these into the published tarball; nothing
+      # here is committed.
+      - name: upload the prebuilt pair
+        if: matrix.node == '22'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: node-prebuild-${{ matrix.os }}-${{ runner.arch }}
+          path: bindings/node/prebuilds/
+          if-no-files-found: error

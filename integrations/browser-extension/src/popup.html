@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>soroauth — explain an entry</title>
+    <link rel="stylesheet" href="./popup.css" />
+  </head>
+  <body class="soroauth-popup">
+    <header class="soroauth-popup__header">
+      <h1 class="soroauth-popup__title">Explain a Soroban authorization entry</h1>
+      <p class="soroauth-popup__lede">
+        Paste the base64 XDR of an entry (an unsigned one from
+        <code>simulateTransaction</code>, or a signed one to check what was
+        approved). The structure comes from the same signing core the library,
+        the CLI and the other bindings use.
+      </p>
+    </header>
+
+    <form id="explain-form" class="soroauth-popup__form">
+      <label class="soroauth-popup__label" for="entry">Entry (base64 XDR)</label>
+      <textarea
+        id="entry"
+        class="soroauth-popup__entry"
+        rows="4"
+        spellcheck="false"
+        placeholder="AAAAAgAAAAA..."
+      ></textarea>
+      <label class="soroauth-popup__label" for="valid-until">
+        Valid-until ledger (used only if the entry carries none)
+      </label>
+      <input
+        id="valid-until"
+        class="soroauth-popup__valid-until"
+        type="number"
+        min="0"
+        placeholder="1234567"
+      />
+      <button id="explain" class="soroauth-popup__submit" type="submit">
+        Explain this entry
+      </button>
+    </form>
+
+    <p id="status" class="soroauth-popup__status" role="status" hidden></p>
+    <div id="report" class="soroauth-popup__report"></div>
+
+    <script type="module" src="./popup.js"></script>
+  </body>
+</html>

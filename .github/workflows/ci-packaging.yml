@@ -1,0 +1,149 @@
+# The CLI's package-manager install paths: the Homebrew formula and the Nix
+# flake.
+#
+# Advisory: it does not run on pull requests (only the two jobs the branch
+# ruleset requires do). It runs when the packaging inputs reach main, and on
+# demand from the Actions tab.
+#
+# The point of both jobs is the same: install the CLI the way a user does, and
+# require `soroauth --version` to report the released version. A formula that
+# merely parses, or a flake that merely evaluates, is not evidence that either
+# installs something that runs.
+#
+# The Homebrew job cannot use the published release on a branch (there is none
+# older than the branch), so it builds the same binaries and tarballs the
+# release produces, renders the formula against them with scripts/gen-formula.sh
+# and a file:// base URL, and installs that. That exercises the template, the
+# checksums and the install path; the release workflow renders the same formula
+# against the real release and pushes it to the tap.
+name: ci / packaging
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packaging/**'
+      - 'scripts/gen-formula.sh'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'cmd/**'
+      - '*.go'
+      - 'go.mod'
+      - 'go.sum'
+      # A workflow's own definition is in its paths, so an edit to this file
+      # re-runs it.
+      - '.github/workflows/ci-packaging.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  homebrew:
+    name: homebrew (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+      HOMEBREW_NO_INSTALL_CLEANUP: '1'
+      # A version that cannot be confused with a release: the check is that the
+      # installed binary reports the version the formula claims, not that it is
+      # any particular release.
+      TEST_VERSION: v0.0.0-packaging-ci
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: build the release tarballs and their checksums
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for target in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64; do
+            goos="${target%%-*}"
+            goarch="${target##*-}"
+            CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
+              go build -trimpath -buildvcs=false \
+              -ldflags="-s -w -X main.version=${TEST_VERSION} -X main.commit=${GITHUB_SHA} -X main.date=unknown" \
+              -o "dist/soroauth-${target}" ./cmd/soroauth
+            mkdir -p "dist/pack-${target}"
+            cp "dist/soroauth-${target}" "dist/pack-${target}/soroauth"
+            tar -czf "dist/soroauth-${target}.tar.gz" -C "dist/pack-${target}" soroauth
+            rm -rf "dist/pack-${target}"
+          done
+          # macOS has no sha256sum; shasum -a 256 writes the same line.
+          if command -v sha256sum >/dev/null 2>&1; then
+            ( cd dist && sha256sum soroauth-*.tar.gz | sort -k2 > ../checksums.txt )
+          else
+            ( cd dist && shasum -a 256 soroauth-*.tar.gz | sort -k2 > ../checksums.txt )
+          fi
+          cat checksums.txt
+      - name: render the formula against the local binaries
+        run: |
+          set -euo pipefail
+          scripts/gen-formula.sh \
+            --version "${TEST_VERSION}" \
+            --checksums checksums.txt \
+            --base-url "file://${PWD}/dist" \
+            --out soroauth.rb
+      - name: install the formula and run the CLI
+        run: |
+          set -euo pipefail
+          if [ "${RUNNER_OS}" = "Linux" ]; then
+            eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+          fi
+          brew --version
+          # A local tap, so the formula is installed the way a user installs it
+          # from the published tap (`brew install soroauth/tap/soroauth`) rather
+          # than through a path Homebrew special-cases.
+          brew tap-new --no-git soroauth/local
+          tapdir="$(brew --repository)/Library/Taps/soroauth/homebrew-local/Formula"
+          mkdir -p "$tapdir"
+          cp soroauth.rb "$tapdir/soroauth.rb"
+          brew install --formula soroauth/local/soroauth
+          # `brew test` runs the formula's own test block, which asserts the
+          # version; this asserts it again from outside, so a broken test block
+          # cannot hide a binary that does not run.
+          brew test soroauth/local/soroauth
+          prefix="$(brew --prefix soroauth/local/soroauth)"
+          "$prefix/bin/soroauth" --version
+          "$prefix/bin/soroauth" --version | grep -F "${TEST_VERSION}"
+
+  nix:
+    name: nix (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: DeterminateSystems/nix-installer-action@cd46bde16ab981b0a7b2dce0574509104543276e # v9
+      - name: the flake is locked
+        run: |
+          set -euo pipefail
+          nix flake metadata --json >/dev/null
+          git diff --exit-code -- flake.lock
+      - name: build the CLI from the flake and run it
+        run: |
+          set -euo pipefail
+          out="$(nix build .# --no-link --print-out-paths)"
+          "$out/bin/soroauth" --version
+          # The flake stamps the version it reports; see packaging/nix/release-version.nix.
+          "$out/bin/soroauth" --version | grep -F "$(grep -oE '[0-9]+\.[0-9]+\.[0-9]+' packaging/nix/release-version.nix | head -1)"
+      - name: the CLI still matches the golden vectors
+        run: |
+          set -euo pipefail
+          out="$(nix build .# --no-link --print-out-paths)"
+          entry="$(jq -r .unsigned_entry_xdr testdata/vectors/v2_single_testnet.json)"
+          payload="$(jq -r .payload_hex testdata/vectors/v2_single_testnet.json)"
+          got="$("$out/bin/soroauth" payload --entry "$entry" --valid-until 1234567 --network testnet --json | jq -r .payload)"
+          [ "$got" = "$payload" ] || {
+            echo "the nix-built CLI does not match the golden vector" >&2
+            exit 1
+          }
+          echo "nix-built payload matches the vector"

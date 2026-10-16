@@ -1,0 +1,223 @@
+/* The reference extension's styles. Plain CSS, no build step: the panel is
+   shared by the popup and the in-page gate, so the classes are the interface
+   between the two. */
+
+:root {
+  --soroauth-fg: #1c1c1e;
+  --soroauth-muted: #5b5b63;
+  --soroauth-bg: #ffffff;
+  --soroauth-line: #d8d8de;
+  --soroauth-critical: #b3261e;
+  --soroauth-warning: #8a5a00;
+  --soroauth-info: #31567d;
+}
+
+body.soroauth-popup {
+  width: 30rem;
+  margin: 0;
+  padding: 0.75rem 1rem 1rem;
+  font:
+    13px/1.45 system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+  color: var(--soroauth-fg);
+  background: var(--soroauth-bg);
+}
+
+.soroauth-popup__title {
+  margin: 0 0 0.25rem;
+  font-size: 15px;
+}
+
+.soroauth-popup__lede {
+  margin: 0 0 0.75rem;
+  color: var(--soroauth-muted);
+}
+
+.soroauth-popup__form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.soroauth-popup__label {
+  font-weight: 600;
+}
+
+.soroauth-popup__entry,
+.soroauth-popup__valid-until {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.35rem 0.45rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  border: 1px solid var(--soroauth-line);
+  border-radius: 4px;
+}
+
+.soroauth-popup__submit {
+  margin-top: 0.4rem;
+  padding: 0.4rem 0.6rem;
+  font: inherit;
+  font-weight: 600;
+  color: #fff;
+  background: #1f5fbf;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.soroauth-popup__status {
+  margin: 0.6rem 0 0;
+  color: var(--soroauth-muted);
+}
+
+.soroauth-popup__status--error {
+  color: var(--soroauth-critical);
+}
+
+.soroauth-explain__panel {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid var(--soroauth-line);
+  border-radius: 6px;
+}
+
+.soroauth-explain__title {
+  margin: 0 0 0.25rem;
+  font-size: 14px;
+}
+
+.soroauth-explain__disclaimer {
+  margin: 0 0 0.6rem;
+  padding: 0.4rem 0.5rem;
+  font-size: 12px;
+  color: var(--soroauth-muted);
+  background: #f5f5f7;
+  border-radius: 4px;
+}
+
+.soroauth-explain__summary {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.15rem 0.75rem;
+  margin: 0 0 0.6rem;
+}
+
+.soroauth-explain__summary dt {
+  font-weight: 600;
+}
+
+.soroauth-explain__summary dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.soroauth-explain__section-title {
+  margin: 0.6rem 0 0.25rem;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--soroauth-muted);
+}
+
+.soroauth-explain__tree {
+  margin: 0;
+  padding: 0.4rem 0.5rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  background: #f5f5f7;
+  border-radius: 4px;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.soroauth-explain__findings,
+.soroauth-explain__limits {
+  margin: 0;
+  padding-left: 1.1rem;
+}
+
+.soroauth-explain__finding {
+  margin-bottom: 0.35rem;
+}
+
+.soroauth-explain__finding--critical strong {
+  color: var(--soroauth-critical);
+}
+
+.soroauth-explain__finding--warning strong {
+  color: var(--soroauth-warning);
+}
+
+.soroauth-explain__finding--info strong {
+  color: var(--soroauth-info);
+}
+
+.soroauth-explain__finding-description,
+.soroauth-explain__finding-rationale {
+  margin: 0.1rem 0 0;
+}
+
+.soroauth-explain__finding-rationale {
+  color: var(--soroauth-muted);
+}
+
+.soroauth-explain__limits {
+  color: var(--soroauth-muted);
+  font-size: 12px;
+}
+
+.soroauth-explain__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgb(0 0 0 / 55%);
+}
+
+.soroauth-explain__backdrop .soroauth-explain__panel {
+  width: min(36rem, 100%);
+  max-height: 85vh;
+  margin: 0;
+  overflow-y: auto;
+  background: var(--soroauth-bg);
+  box-shadow: 0 12px 40px rgb(0 0 0 / 35%);
+}
+
+.soroauth-explain__actions {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  margin-top: 0.75rem;
+  padding-top: 0.6rem;
+  background: var(--soroauth-bg);
+  border-top: 1px solid var(--soroauth-line);
+}
+
+.soroauth-explain__reject,
+.soroauth-explain__approve {
+  padding: 0.4rem 0.7rem;
+  font: inherit;
+  font-weight: 600;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.soroauth-explain__reject {
+  color: var(--soroauth-fg);
+  background: #fff;
+  border: 1px solid var(--soroauth-line);
+}
+
+.soroauth-explain__approve {
+  color: #fff;
+  background: #1f5fbf;
+  border: 1px solid #1f5fbf;
+}

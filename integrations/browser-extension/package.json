@@ -1,0 +1,12 @@
+{
+  "name": "@soroauth/browser-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Reference browser extension that shows the structure of a Soroban authorization entry, and the risk analyzer's findings, before a signing request is approved. Not a product: no store listing, no telemetry, no update channel.",
+  "license": "Apache-2.0",
+  "scripts": {
+    "stage": "node scripts/stage-wasm.mjs",
+    "test": "node scripts/stage-wasm.mjs && node --test test/report.test.mjs"
+  }
+}

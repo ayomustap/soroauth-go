@@ -1,0 +1,34 @@
+{
+  "name": "@soroauth/node",
+  "version": "0.1.0",
+  "description": "Native Node.js binding for soroauth: build, sign and inspect Soroban authorization entries through the C ABI, for Node backends that cannot run the wasm build.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/soroauth/soroauth-go.git",
+    "directory": "bindings/node"
+  },
+  "main": "index.js",
+  "types": "index.d.ts",
+  "gypfile": true,
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "lib/",
+    "src/",
+    "binding.gyp",
+    "prebuilds/",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "install": "node scripts/install.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "node-gyp": "^13.1.0"
+  }
+}
