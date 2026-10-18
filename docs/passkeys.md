@@ -113,6 +113,45 @@ challenge-binding check alone does not close this — the browser has to be the
 one that derives the payload from the entry it displays. That is what the wasm
 core is for; see [Step 0](#step-0-the-browser-derives-the-payload).
 
+## Enrolment: verifying the attestation
+
+Signing starts from a key the wallet already trusts; enrolment is where it
+decides to trust one. `VerifyAttestation` checks the registration the browser
+returns when the passkey is created, following WebAuthn Level 2 section 7.1: the
+client data (`webauthn.create`, your challenge, your origin), the RP ID hash,
+the user presence and verification flags, and the attestation statement.
+
+```text
+res, err := soroauth.VerifyAttestation(soroauth.AttestationRequest{
+    AttestationObject: attestationObject,
+    ClientDataJSON:    clientDataJSON,
+    RPID:              "wallet.example",
+    Origin:            "https://wallet.example",
+    Challenge:         challenge,
+    RequireUserVerification: true,
+    TrustRoots:        roots, // optional; without it a chain is at most "unrooted"
+})
+// res.PublicKeySEC1 is the key to enrol; pass the same key to
+// NewPasskeySignerFromAssertion when signing.
+```
+
+Only `none` and `packed` statements with ES256 keys are verified; any other
+format is refused (`ErrAttestationUnsupportedFormat`), not skipped. The result
+says how much was proven:
+
+| `Trust`    | Meaning                                                                                       |
+| ---------- | --------------------------------------------------------------------------------------------- |
+| `none`     | Nothing about the authenticator. Not a weak pass: the key could have been made anywhere.      |
+| `self`     | The registrant held the private key. Nothing about the authenticator model.                   |
+| `unrooted` | Signature valid under the x5c leaf certificate, but no trust roots were supplied.             |
+| `rooted`   | The x5c chain verifies to a root you supplied. Only here are the AAGUID and hardware claimed. |
+
+`HardwareBacked` is true only at `rooted`, and is exactly as strong as the roots
+you chose: the library does not know which roots belong to hardware
+authenticators. Backup flags are reported as asserted; a synced passkey is not a
+device-bound key. The test vectors are real authenticators' registrations, with
+their origin recorded in `testdata/attestation/README.md`.
+
 ## Step 0: the browser derives the payload
 
 The unsigned entry comes from `simulateTransaction` in record mode, exactly as

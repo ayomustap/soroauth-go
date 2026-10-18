@@ -36,13 +36,15 @@ committed seed proving it stays that way (`trailing_garbage_byte_0`).
 
 ## The seed corpus
 
-Seeds come from the golden vectors: `go run ./cmd/gencorpus` decodes every
-committed vector and writes it in Go's corpus format under
-`testdata/fuzz/<TargetName>`, plus a manifest of what it generated under
-`testdata/fuzz/.gencorpus/<TargetName>`. Regeneration deletes exactly the
-manifested files before rewriting, so a stale seed disappears while a committed
-crash reproducer sharing the directory survives. CI regenerates and fails on
-drift, the same way it does for the vectors themselves.
+Seeds come from the golden vectors: `go run ./cmd/gencorpus` decodes committed
+vectors and writes them in Go's corpus format under the declaring package's
+`testdata/fuzz/<TargetName>` directory. The root-package targets use
+`testdata/fuzz/`; `FuzzCopyRoundTrip` uses
+`internal/xdrcopy/testdata/fuzz/FuzzCopyRoundTrip`. A manifest under
+`testdata/fuzz/.gencorpus/<TargetName>` records generated files. Regeneration
+deletes exactly the manifested files before rewriting, so a stale seed
+disappears while a committed crash reproducer sharing the directory survives. CI
+regenerates and fails on drift, the same way it does for the vectors themselves.
 
 Never hand-edit a generated seed: change the vectors or the generator and
 regenerate. Crash reproducers are the exception — they are evidence of a

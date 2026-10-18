@@ -565,8 +565,14 @@ func contractErrorCodes(t *testing.T, diagnosticsXDR []string) []uint32 {
 // hostErrorDetail is one error diagnostic the host emitted: the error value
 // from the topics, the message string, and any numeric arguments that came
 // with it.
+//
+// ErrorCode is the ScErrorCode alongside ErrorType (for example Auth /
+// InvalidInput for "signature has expired", and Auth / ExistingValue for a
+// reused nonce). ContractCode is set only when ErrorType is Contract.
 type hostErrorDetail struct {
 	ErrorType    int32
+	ErrorCode    int32
+	HasErrorCode bool
 	ContractCode uint32
 	HasCode      bool
 	Message      string
@@ -630,6 +636,10 @@ func hostErrorDetails(t *testing.T, diagnosticsXDR []string) []hostErrorDetail {
 			if topic.Type == xdr.ScValTypeScvError && topic.Error != nil {
 				sawError = true
 				detail.ErrorType = int32(topic.Error.Type)
+				if topic.Error.Code != nil {
+					detail.ErrorCode = int32(*topic.Error.Code)
+					detail.HasErrorCode = true
+				}
 				if topic.Error.ContractCode != nil {
 					detail.ContractCode = uint32(*topic.Error.ContractCode)
 					detail.HasCode = true

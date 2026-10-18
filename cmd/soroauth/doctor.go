@@ -12,13 +12,17 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/stellar/go-stellar-sdk/keypair"
+
+	"github.com/soroauth/soroauth-go"
 )
 
 const doctorUsage = `soroauth doctor — check the local environment for common first-run problems.
 
 usage:
   soroauth doctor [--config <path>] [--network <name|passphrase>] [--rpc-url <url>] \
-                  [--secret-env <VAR>] [--format text|json] [--timeout <duration>] [--json]
+                  [--secret-env <VAR>] [--address <G…>] [--format text|json] [--timeout <duration>] [--json]
 
 Most first-run failures are environmental rather than something wrong with an
 entry or a key, and the error from "sign" or "payload" does not say so. This
@@ -37,7 +41,20 @@ and reports each as pass or fail:
                   is given: whether the named environment variable is set to a
                   non-empty value
 
-Nothing here ever inspects or prints a secret's value, only whether it is set.
+  signer possession
+                  only checked when the secret env var is set: the signer signs
+                  a throwaway payload that cannot be a real authorization and
+                  the signature is verified against the address it claims. By
+                  default that is the seed's own address; --address names the
+                  account the signer is meant to sign for, which finds a seed
+                  configured for the wrong account before a transaction fails
+                  on-chain. A pass proves key control, not that the key is a
+                  signer of the account on-chain. cannot_check (a signer whose
+                  signature the library cannot verify offline) is a failure,
+                  never a pass.
+
+Nothing here ever prints a secret's value. The possession check uses the
+seed in memory to sign and reports only addresses.
 
 With --json (or --format json), prints one JSON object: "config" (which file was
 loaded and each setting's resolved value and source), "checks" (one entry per
@@ -84,7 +101,8 @@ func runDoctor(args []string, stdout, stderr io.Writer, getenv func(string) stri
 	configFlag := flags.String("config", "", "path to CLI configuration file (default $SOROAUTH_CONFIG or ~/.config/soroauth/config.json)")
 	networkFlag := flags.String("network", "", "testnet, futurenet, public, or a literal network passphrase")
 	rpcURL := flags.String("rpc-url", "https://soroban-testnet.stellar.org", "URL to check network reachability against")
-	secretEnv := flags.String("secret-env", "", "name of an environment variable whose presence (not value) to check")
+	secretEnv := flags.String("secret-env", "", "name of an environment variable holding the signing seed; checked for presence and key control")
+	address := flags.String("address", "", "account (G…) the signer is meant to sign for; defaults to the seed's own address")
 	formatFlag := flags.String("format", "text", "output format: text or json")
 	timeout := flags.Duration("timeout", 5*time.Second, "timeout for the network check")
 	jsonFlag := flags.Bool("json", false, "output as JSON")
@@ -129,7 +147,11 @@ func runDoctor(args []string, stdout, stderr io.Writer, getenv func(string) stri
 		checkNetwork(rpcRes.Value, *timeout),
 	}
 	if secRes.Value != "" {
-		checks = append(checks, checkSecretEnv(secRes.Value, getenv))
+		secretCheck := checkSecretEnv(secRes.Value, getenv)
+		checks = append(checks, secretCheck)
+		if secretCheck.Pass {
+			checks = append(checks, checkSignerPossession(secRes.Value, *address, getenv))
+		}
 	}
 
 	ok := true
@@ -288,4 +310,37 @@ func checkSecretEnv(name string, getenv func(string) string) doctorCheck {
 		return doctorCheck{Name: checkName, Pass: false, Detail: fmt.Sprintf("%s is empty or unset", name)}
 	}
 	return doctorCheck{Name: checkName, Pass: true, Detail: fmt.Sprintf("%s is set", name)}
+}
+
+// checkSignerPossession runs soroauth.CheckPossession for the signer the
+// secret env var configures. It reports only addresses, never the seed, and it
+// treats cannot_check as a failure: a doctor that passed on "could not tell"
+// would hide exactly the misconfiguration it exists to find.
+func checkSignerPossession(envName, claimed string, getenv func(string) string) doctorCheck {
+	const name = "signer possession"
+
+	parsed, err := keypair.Parse(getenv(envName))
+	full, ok := parsed.(*keypair.Full)
+	if err != nil || !ok {
+		return doctorCheck{Name: name, Pass: false,
+			Detail: fmt.Sprintf("%s does not hold a valid Stellar secret seed (S…)", envName)}
+	}
+
+	signer := soroauth.NewEd25519Signer(full)
+	if claimed != "" {
+		signer = soroauth.SignerFunc(claimed, signer.Sign)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	report, err := soroauth.CheckPossession(ctx, signer)
+	if err != nil {
+		return doctorCheck{Name: name, Pass: false, Detail: fmt.Sprintf("%s: %v", signer.Address(), err)}
+	}
+	if !report.Passed() {
+		return doctorCheck{Name: name, Pass: false,
+			Detail: fmt.Sprintf("%s: %s: %s", report.Address, report.Verdict, report.Reason)}
+	}
+	return doctorCheck{Name: name, Pass: true,
+		Detail: fmt.Sprintf("%s: the signer controls this address", report.Address)}
 }

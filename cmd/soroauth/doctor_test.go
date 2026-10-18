@@ -1,12 +1,15 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stellar/go-stellar-sdk/keypair"
 )
 
 // TestGoVersionParsing covers the pure parsing and comparison logic without
@@ -128,7 +131,8 @@ func TestDoctorCLIAllPass(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	stdout, stderr, err := runCLIEnv(t, map[string]string{"SEED": "SABCDEXAMPLE"},
+	seed := doctorTestKey(t, "soroauth-doctor-allpass").Seed()
+	stdout, stderr, err := runCLIEnv(t, map[string]string{"SEED": seed},
 		"doctor", "--rpc-url", srv.URL, "--secret-env", "SEED", "--json")
 	if err != nil {
 		t.Fatalf("doctor returned an unexpected error: %v", err)
@@ -147,17 +151,79 @@ func TestDoctorCLIAllPass(t *testing.T) {
 	if !report.OK {
 		t.Errorf("report.OK is false: %+v", report)
 	}
-	if len(report.Checks) != 3 {
-		t.Fatalf("got %d checks, want 3 (go toolchain, network, secret env)", len(report.Checks))
+	if len(report.Checks) != 4 {
+		t.Fatalf("got %d checks, want 4 (go toolchain, network, secret env, signer possession)", len(report.Checks))
 	}
 	for _, c := range report.Checks {
 		if !c.Pass {
 			t.Errorf("check %q failed: %+v", c.Name, c)
 		}
 	}
-	if strings.Contains(stdout, "SABCDEXAMPLE") {
+	if strings.Contains(stdout, seed) {
 		t.Errorf("stdout leaked the secret: %q", stdout)
 	}
+}
+
+func doctorTestKey(t *testing.T, label string) *keypair.Full {
+	t.Helper()
+	kp, err := keypair.FromRawSeed(sha256.Sum256([]byte(label)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return kp
+}
+
+// TestDoctorSignerPossession proves doctor runs the possession check when a
+// signer is configured, and that a seed configured for the wrong account is
+// caught: the failure a service would otherwise discover only after fees.
+func TestDoctorSignerPossession(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+
+	key := doctorTestKey(t, "soroauth-doctor-possession")
+	other := doctorTestKey(t, "soroauth-doctor-other")
+	env := map[string]string{"SEED": key.Seed(), "BAD": "SABCDEXAMPLE"}
+
+	possession := func(t *testing.T, args ...string) (doctorCheck, doctorReport) {
+		t.Helper()
+		full := append([]string{"doctor", "--rpc-url", srv.URL, "--json"}, args...)
+		stdout, _, _ := runCLIEnv(t, env, full...)
+		var report doctorReport
+		if err := json.Unmarshal([]byte(stdout), &report); err != nil {
+			t.Fatalf("stdout is not valid JSON: %v: %q", err, stdout)
+		}
+		for _, c := range report.Checks {
+			if c.Name == "signer possession" {
+				return c, report
+			}
+		}
+		return doctorCheck{}, report
+	}
+
+	t.Run("the seed controls its own address", func(t *testing.T) {
+		c, report := possession(t, "--secret-env", "SEED")
+		if !c.Pass || !report.OK || !strings.Contains(c.Detail, key.Address()) {
+			t.Fatalf("check = %+v, ok = %v", c, report.OK)
+		}
+	})
+	t.Run("the seed is configured for the wrong account", func(t *testing.T) {
+		c, report := possession(t, "--secret-env", "SEED", "--address", other.Address())
+		if c.Pass || report.OK || !strings.Contains(c.Detail, "does not match its configured address") {
+			t.Fatalf("check = %+v, ok = %v", c, report.OK)
+		}
+	})
+	t.Run("a value that is not a seed", func(t *testing.T) {
+		c, report := possession(t, "--secret-env", "BAD")
+		if c.Pass || report.OK || strings.Contains(c.Detail, "SABCDEXAMPLE") {
+			t.Fatalf("check = %+v, ok = %v", c, report.OK)
+		}
+	})
+	t.Run("no signer configured means no possession check", func(t *testing.T) {
+		c, _ := possession(t)
+		if c.Name != "" {
+			t.Fatalf("possession check ran without a signer: %+v", c)
+		}
+	})
 }
 
 // TestDoctorCLIFailure asserts the failure exit code and that a failing

@@ -48,6 +48,9 @@ Arms 1 is CAP-46-11. Arms 2 and 3 are CAP-71-01 and CAP-71-02.
 
 ## Signing flow
 
+For the same flow as a one-page, function-by-function guide, see
+[docs/signing-flow.md](docs/signing-flow.md).
+
 ![The signing flow: record-mode simulation, build the preimage, hash it to the payload, sign it, write the signature onto every matching credential node, then enforce-mode simulation, assembly and submission.](docs/diagrams/signing-flow.svg)
 
 The source is

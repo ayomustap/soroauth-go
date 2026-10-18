@@ -456,11 +456,14 @@ for f in .github/workflows/*.yml; do
 done
 ```
 
-**Every advisory workflow lists its own file in its `paths:`**, so an edit to a
-workflow re-runs it. Without that line a change to a workflow cannot validate
-itself: #294 changed only `ci-adapters.yml`, matched nothing in that workflow's
-own filter, and landed on `main` with its new job never having run once. If you
-add a workflow with a `paths:` filter, include its own path.
+**Every filtered workflow trigger must include its workflow's own path.** The
+root Go test
+[`TestPathFilteredWorkflowsIncludeTheirOwnPath`](workflow_paths_test.go) parses
+each workflow and fails when any `paths:` list omits its own path. Without that
+line a change to a workflow cannot validate itself: #294 changed only
+`ci-adapters.yml`, matched nothing in that workflow's own filter, and landed on
+`main` with its new job never having run once. If you add a workflow with a
+`paths:` filter, include its own path in every filtered event.
 
 ### Release attestations and signatures
 

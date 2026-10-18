@@ -71,7 +71,7 @@ func TestConfigPrecedenceOrder(t *testing.T) {
 
 	t.Run("file overrides built-in default", func(t *testing.T) {
 		stdout, _, err := runCLIEnv(t, map[string]string{
-			"FILE_SEED_VAR": "SABCDEXAMPLE",
+			"FILE_SEED_VAR": doctorTestKey(t, "soroauth-config-test").Seed(),
 		}, "doctor", "--config", cfgPath)
 		if err != nil {
 			t.Fatalf("doctor with config file failed: %v", err)
@@ -105,7 +105,7 @@ func TestConfigPrecedenceOrder(t *testing.T) {
 			envRPCURL:      srvEnv.URL,
 			envSecretEnv:   "ENV_SEED_VAR",
 			envFormat:      "text",
-			"ENV_SEED_VAR": "SABCDEXAMPLE",
+			"ENV_SEED_VAR": doctorTestKey(t, "soroauth-config-test").Seed(),
 		}, "doctor")
 		if err != nil {
 			t.Fatalf("doctor failed: %v", err)
@@ -131,7 +131,7 @@ func TestConfigPrecedenceOrder(t *testing.T) {
 			envRPCURL:       srvEnv.URL,
 			envSecretEnv:    "ENV_SEED_VAR",
 			envFormat:       "text",
-			"FLAG_SEED_VAR": "SABCDEXAMPLE",
+			"FLAG_SEED_VAR": doctorTestKey(t, "soroauth-config-test").Seed(),
 		}, "doctor",
 			"--network", "testnet",
 			"--rpc-url", srvFlag.URL,

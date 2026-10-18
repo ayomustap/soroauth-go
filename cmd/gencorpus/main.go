@@ -11,10 +11,10 @@
 //
 // Three details about the output are not free choices:
 //
-//   - The directory is testdata/fuzz/<TargetName>. Go reads a
-//     target's seed corpus from testdata/fuzz/<TargetName>, and only from
-//     there; files anywhere else, including directly in testdata/fuzz, are
-//     ignored.
+//   - Go reads a target's seed corpus from testdata/fuzz/<TargetName> relative
+//     to the package that declares the target. Most targets live in the root
+//     package; FuzzCopyRoundTrip lives in internal/xdrcopy and gets its own
+//     package-local directory.
 //   - The file format is Go's corpus format — the "go test fuzz v1" header
 //     followed by one Go literal per fuzz argument — not the raw bytes. A file
 //     in that directory that is not in this format fails the package's tests
@@ -213,6 +213,11 @@ func run() error {
 		fmt.Printf("wrote %d seeds for %s into %s\n", written, target, outDir)
 		totalWritten += written
 	}
+	copySeeds, err := writeCopyRoundTripSeed(names)
+	if err != nil {
+		return err
+	}
+	totalWritten += copySeeds
 
 	// FuzzPayload takes []byte as input but doesn't use entry XDR.
 	// We add some basic payload seeds separately.
@@ -240,6 +245,47 @@ func run() error {
 	fmt.Printf("total seeds written: %d\n", totalWritten)
 	fmt.Printf("recorded native expectations for %d seeds in %s\n", recorded, expectationsPath)
 	return nil
+}
+
+func writeCopyRoundTripSeed(names []string) (int, error) {
+	const target = "FuzzCopyRoundTrip"
+	outDir := filepath.Join("internal", "xdrcopy", "testdata", "fuzz", target)
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		return 0, fmt.Errorf("creating %s: %w", outDir, err)
+	}
+	if err := clearGenerated(outDir, target); err != nil {
+		return 0, err
+	}
+	if len(names) == 0 {
+		return 0, fmt.Errorf("no golden vectors available for %s", target)
+	}
+
+	path := filepath.Join(vectorsDir, names[0])
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return 0, fmt.Errorf("reading %s: %w", path, err)
+	}
+	var v vector
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return 0, fmt.Errorf("parsing %s: %w", path, err)
+	}
+	seed, err := decodeEntry(v.UnsignedEntryXDR, path)
+	if err != nil {
+		return 0, err
+	}
+	if len(seed) == 0 {
+		return 0, fmt.Errorf("%s has no unsigned entry for %s", path, target)
+	}
+
+	name := strings.TrimSuffix(filepath.Base(path), ".json") + "_0"
+	if err := os.WriteFile(filepath.Join(outDir, name), corpusFile(seed), 0o644); err != nil {
+		return 0, fmt.Errorf("writing %s/%s: %w", outDir, name, err)
+	}
+	if err := writeManifest(target, []string{name}); err != nil {
+		return 0, fmt.Errorf("writing the %s manifest: %w", target, err)
+	}
+	fmt.Printf("wrote 1 seed for %s into %s\n", target, outDir)
+	return 1, nil
 }
 
 // corpusFile renders one seed in Go's fuzz corpus format: the version header,

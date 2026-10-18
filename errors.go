@@ -289,6 +289,52 @@ var (
 	// ErrLedgerDenied is returned when the user rejects the review on the device
 	// (status word 0x6985).
 	ErrLedgerDenied = errors.New("the request was rejected on the ledger device")
+
+	// ErrAttestationMalformed is returned by VerifyAttestation when the
+	// attestation object, authenticator data, client data or a certificate in
+	// the statement cannot be parsed. It is distinct from ErrAttestationInvalid
+	// so a caller can tell a broken client from a forged registration.
+	ErrAttestationMalformed = errors.New("webauthn attestation is malformed")
+
+	// ErrAttestationInvalid is returned by VerifyAttestation when the
+	// attestation parses but fails a check the WebAuthn specification
+	// requires: a signature, the RP ID hash, the challenge, the origin, a
+	// flag, or a certificate requirement. The wrapped text names the check and
+	// the specification section.
+	ErrAttestationInvalid = errors.New("webauthn attestation failed verification")
+
+	// ErrAttestationUnsupportedFormat is returned by VerifyAttestation for a
+	// statement format, signature algorithm or credential key type it does not
+	// verify. It is refused rather than skipped, because skipping would report
+	// an unchecked statement as attested.
+	ErrAttestationUnsupportedFormat = errors.New("webauthn attestation format or algorithm is not supported")
+
+	// ErrPolicyRefusal marks a signing failure that is a decision, not a
+	// fault: a policy engine, an approval flow or a human said no. A signer
+	// chain stops on it and never falls through to another signer, because
+	// asking a second signer after the first one refused would route around
+	// the refusal. Signers that refuse wrap this sentinel.
+	ErrPolicyRefusal = errors.New("signing refused by policy")
+
+	// ErrSignerTransient marks a signing failure that a different signer could
+	// reasonably clear, such as a timeout or an unreachable service. A signer
+	// chain falls through only on errors that wrap it; every other error is
+	// terminal, so an error the chain cannot classify stops it. Use
+	// MarkTransient to mark an error.
+	ErrSignerTransient = errors.New("transient signer failure")
+
+	// ErrChainExhausted is returned by a fallback chain when every signer was
+	// tried and every one failed transiently.
+	ErrChainExhausted = errors.New("every signer in the chain failed")
+
+	// ErrQuorumNotMet is returned by a quorum chain when fewer signers
+	// returned a signature than the quorum requires.
+	ErrQuorumNotMet = errors.New("signer quorum was not met")
+
+	// ErrQuorumDisagreement is returned by a quorum chain when signers
+	// returned different signatures. It is a refusal, not a vote: one of them
+	// is wrong, and the chain does not guess which.
+	ErrQuorumDisagreement = errors.New("signers disagree on the signature")
 )
 
 // NoMatchingCredentialNodeError is returned when no credential node in the

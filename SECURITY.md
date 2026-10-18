@@ -35,6 +35,22 @@ hang client goroutines indefinitely.
   underlying inability to abort ongoing hardware operations or network requests
   if cancellation cannot interrupt the physical device or socket.
 
+## Untrusted authorization entries
+
+Authorization entries from simulations, RPC responses or callers are untrusted
+input. For external base64 XDR, use `DecodeAuthorizationEntry`: it bounds the
+decoded input to 1 MiB and nesting to 64 levels, while recursive operations
+apply the same depth bound to already-decoded entries (`decode.go`). Treat a
+limit refusal as an error, and apply your own size limits before constructing
+large in-memory XDR values; these bounds do not validate application-specific
+authorization policy. The adversarial regression cases are loaded by
+`TestAdversarialRegressionsAreRefused` in `adversarial_test.go` from
+`testdata/differential/regressions/`.
+
+There is no separate hostile-input threat-model document to reconcile this note
+against. [Static security analysis](docs/security-analysis.md) covers scanner
+and dependency-review policy, not untrusted-entry handling.
+
 ## Scope
 
 **Signature-correctness bugs are critical.** Anything in these categories should

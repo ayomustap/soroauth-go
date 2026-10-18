@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -55,6 +56,129 @@ func TestEverySentinelHasAProducingTest(t *testing.T) {
 	}
 
 	t.Logf("%d exported sentinels, all mentioned by at least one test", len(sentinels))
+}
+
+func TestSentinelValuesAndMessagesAreDistinct(t *testing.T) {
+	sentinels := sentinelDeclarations(t, "errors.go")
+	if len(sentinels) == 0 {
+		t.Fatal("found no exported sentinels in errors.go; refusing a vacuous distinctness check")
+	}
+
+	values := map[string]error{
+		"ErrSourceAccountCredentials":           ErrSourceAccountCredentials,
+		"ErrUnsupportedCredentials":             ErrUnsupportedCredentials,
+		"ErrNoMatchingCredentialNode":           ErrNoMatchingCredentialNode,
+		"ErrDuplicateDelegate":                  ErrDuplicateDelegate,
+		"ErrSignatureMismatch":                  ErrSignatureMismatch,
+		"ErrMissingSigner":                      ErrMissingSigner,
+		"ErrAlreadySigned":                      ErrAlreadySigned,
+		"ErrInvalidExpiration":                  ErrInvalidExpiration,
+		"ErrTooManySignatures":                  ErrTooManySignatures,
+		"ErrDecodeLimit":                        ErrDecodeLimit,
+		"ErrNoInvokeOperation":                  ErrNoInvokeOperation,
+		"ErrUnsupportedEnvelope":                ErrUnsupportedEnvelope,
+		"ErrUnsignedCredentialNode":             ErrUnsignedCredentialNode,
+		"ErrDelegatePlanUnmatched":              ErrDelegatePlanUnmatched,
+		"ErrNonceAlreadyReserved":               ErrNonceAlreadyReserved,
+		"ErrWebAuthnMalformedJSON":              ErrWebAuthnMalformedJSON,
+		"ErrWebAuthnMissingField":               ErrWebAuthnMissingField,
+		"ErrWebAuthnMalformedField":             ErrWebAuthnMalformedField,
+		"ErrWebAuthnTruncatedAuthenticatorData": ErrWebAuthnTruncatedAuthenticatorData,
+		"ErrWebAuthnChallengeMismatch":          ErrWebAuthnChallengeMismatch,
+		"ErrSignerAddressMismatch":              ErrSignerAddressMismatch,
+		"ErrVaultUnauthorized":                  ErrVaultUnauthorized,
+		"ErrVaultKeyNotFound":                   ErrVaultKeyNotFound,
+		"ErrVaultKeyType":                       ErrVaultKeyType,
+		"ErrLedgerUnavailable":                  ErrLedgerUnavailable,
+		"ErrLedgerLocked":                       ErrLedgerLocked,
+		"ErrLedgerWrongApp":                     ErrLedgerWrongApp,
+		"ErrLedgerBlindSigningDisabled":         ErrLedgerBlindSigningDisabled,
+		"ErrLedgerDenied":                       ErrLedgerDenied,
+		"ErrAttestationMalformed":               ErrAttestationMalformed,
+		"ErrAttestationInvalid":                 ErrAttestationInvalid,
+		"ErrAttestationUnsupportedFormat":       ErrAttestationUnsupportedFormat,
+		"ErrPolicyRefusal":                      ErrPolicyRefusal,
+		"ErrSignerTransient":                    ErrSignerTransient,
+		"ErrChainExhausted":                     ErrChainExhausted,
+		"ErrQuorumNotMet":                       ErrQuorumNotMet,
+		"ErrQuorumDisagreement":                 ErrQuorumDisagreement,
+	}
+	if len(values) != len(sentinels) {
+		t.Fatalf("found %d sentinel declarations but %d actual values; update this check to cover every sentinel", len(sentinels), len(values))
+	}
+
+	seen := make(map[string]error, len(sentinels))
+	for _, sentinel := range sentinels {
+		value, ok := values[sentinel.name]
+		if !ok {
+			t.Errorf("sentinel %s has no actual value in the distinctness check", sentinel.name)
+			continue
+		}
+		if value.Error() != sentinel.message {
+			t.Errorf("sentinel %s value message %q differs from errors.go message %q", sentinel.name, value.Error(), sentinel.message)
+		}
+		for otherName, otherValue := range seen {
+			if value == otherValue {
+				t.Errorf("sentinels %s and %s share the same error value", sentinel.name, otherName)
+			}
+			if value.Error() == otherValue.Error() {
+				t.Errorf("sentinels %s and %s share the message %q", sentinel.name, otherName, value.Error())
+			}
+		}
+		seen[sentinel.name] = value
+	}
+}
+
+type sentinelDeclaration struct {
+	name    string
+	message string
+}
+
+func sentinelDeclarations(t *testing.T, path string) []sentinelDeclaration {
+	t.Helper()
+
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, path, nil, 0)
+	if err != nil {
+		t.Fatalf("parsing %s: %v", path, err)
+	}
+
+	var sentinels []sentinelDeclaration
+	for _, decl := range file.Decls {
+		genDecl, ok := decl.(*ast.GenDecl)
+		if !ok || genDecl.Tok != token.VAR {
+			continue
+		}
+		for _, spec := range genDecl.Specs {
+			valueSpec, ok := spec.(*ast.ValueSpec)
+			if !ok || len(valueSpec.Values) != len(valueSpec.Names) {
+				continue
+			}
+			for i, name := range valueSpec.Names {
+				if !name.IsExported() || !strings.HasPrefix(name.Name, "Err") {
+					continue
+				}
+				call, ok := valueSpec.Values[i].(*ast.CallExpr)
+				if !ok || len(call.Args) != 1 {
+					t.Fatalf("sentinel %s is not initialized with errors.New(string)", name.Name)
+				}
+				selector, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok || selector.Sel.Name != "New" {
+					t.Fatalf("sentinel %s is not initialized with errors.New(string)", name.Name)
+				}
+				message, ok := call.Args[0].(*ast.BasicLit)
+				if !ok || message.Kind != token.STRING {
+					t.Fatalf("sentinel %s does not have a literal error message", name.Name)
+				}
+				decoded, err := strconv.Unquote(message.Value)
+				if err != nil {
+					t.Fatalf("decoding message for %s: %v", name.Name, err)
+				}
+				sentinels = append(sentinels, sentinelDeclaration{name: name.Name, message: decoded})
+			}
+		}
+	}
+	return sentinels
 }
 
 // exportedSentinels returns the exported error variables declared in path.

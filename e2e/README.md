@@ -88,6 +88,12 @@ five.
 | I   | M-of-N, M-1                             | The same account with one signed delegate is refused with the contract's `InsufficientSignatures` (error 3).                                                                                      |
 | J   | Passkey (P-256) wallet                  | A custom account that verifies an ES256 (secp256r1) signature over the authorization payload accepts an entry signed through `NewPasskeySigner` and `Secp256r1SignatureScVal`.                    |
 | K   | Passkey, bad signature                  | The same wallet and transfer with a corrupted P-256 signature is refused by the host's own `secp256r1` verification, reported as `Error(Crypto, InvalidInput)`, "failed secp256r1 verification".  |
+| L   | Expired signature, rejected             | An entry signed with `signatureExpirationLedger` in the past is refused with `Auth` / `InvalidInput`, "signature has expired".                                                                    |
+| M   | Expiration ledger itself, accepted      | An entry submitted at exactly its `signatureExpirationLedger` is accepted, proving the host's bound is inclusive. Skips rather than fails if the exact ledger cannot be hit.                      |
+| N   | Nonce replay, first submission          | A valid entry is accepted, consuming its nonce.                                                                                                                                                   |
+| O   | Nonce replay, second submission         | A second envelope carrying the same signed entry — same address, same nonce — is refused with `Auth` / `ExistingValue`, "nonce already exists for address".                                       |
+| P   | Nonce replay, fresh-nonce control       | A new entry with a fresh nonce is accepted after the replay rejection, proving the account is not broken.                                                                                         |
+| Q   | Three-level delegate tree               | A tree three delegate levels deep (A -> B -> C -> D), chained through modular accounts, is accepted; the submitted envelope is decoded back to observe its shape and the leaf signature verifies. |
 
 Several tests exist only to stop the accepting ones passing for the wrong
 reason:
@@ -106,6 +112,16 @@ reason:
   accepting halves honest: F proves a window is honoured only because G proves
   the same window is enforced, and H proves partial signing works only because I
   proves a shortfall is caught.
+- **Scenario L and M are two halves of one rule.** M proves the expiration
+  ledger itself is still valid, and L proves the ledger after it is not. L alone
+  would leave the inclusive bound unobserved; M alone would not show the bound
+  is enforced. M skips, with a message, when the exact ledger cannot be hit.
+- **Scenario O asserts the host's nonce error, not merely a failure**, and P is
+  its control: without P, a rejection for any unrelated reason (a broken
+  account, a malformed entry) would look like replay protection working.
+- **Scenario Q decodes the submitted envelope** and asserts the observed tree is
+  three delegate levels deep, rather than trusting that the tree it built was
+  the tree that went out.
 - **Scenario K asserts the host's own error, and keeps the key constant.** It is
   satisfied only by a `Crypto` failure whose message names the `secp256r1`
   verification. The credential public key it submits is the registered one and

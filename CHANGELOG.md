@@ -8,6 +8,21 @@ this project adheres to
 
 ## [Unreleased]
 
+- Signer work. `signertest.Run` is an importable conformance suite for the
+  `Signer` contract (stable address, honoured context without signing, an
+  untouched preimage, no partial value on failure, and determinism only when the
+  caller declares it); every signer this module ships passes it, and a nil
+  signer fails it loudly. `CheckPossession` signs a throwaway payload bound to a
+  network ID no network uses and verifies it against the claimed address,
+  reporting `cannot_check` where the library cannot decide offline;
+  `soroauth doctor` runs it for the seed named by `--secret-env` (with
+  `--address` to name the account it should sign for). `NewFallbackSigner` and
+  `NewQuorumSigner` combine signers for one address: only errors marked with
+  `MarkTransient` fall through, a policy refusal or any unclassified error stops
+  the chain, disagreeing quorum signatures are refused, and every attempt
+  reaches an audit sink. `VerifyAttestation` verifies a passkey registration
+  (`none` and `packed`, other formats refused) and separates what was proven
+  from what was asserted.
 - The CLI can obtain an authorization entry and submit one, which are the two
   steps its whole workflow was missing. `soroauth simulate` runs the record pass
   for a transaction envelope and prints every entry the host recorded with its
