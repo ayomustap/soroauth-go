@@ -126,9 +126,13 @@ func goString(s *C.char) string {
 }
 
 // decodeEntry parses a base64 XDR SorobanAuthorizationEntry from the ABI.
+//
+// It decodes through the library's bounded decoder, so an entry the ABI caller
+// supplies is refused when it is too deep or too large instead of being decoded
+// with the SDK's defaults.
 func decodeEntry(b64 string) (xdr.SorobanAuthorizationEntry, error) {
-	var entry xdr.SorobanAuthorizationEntry
-	if err := xdr.SafeUnmarshalBase64(b64, &entry); err != nil {
+	entry, err := soroauth.DecodeAuthorizationEntry(b64)
+	if err != nil {
 		return xdr.SorobanAuthorizationEntry{}, fmt.Errorf("soroauth: c abi: decoding entry: %w", err)
 	}
 	return entry, nil
@@ -199,6 +203,16 @@ func SoroauthPreimage(entryB64 *C.char, validUntilLedger C.longlong, networkPass
 
 // SoroauthPayload hashes an already-built preimage to its 32-byte payload.
 //
+// The preimage is caller-supplied base64 XDR, so it is untrusted input, but
+// soroauth publishes no bounded decoder for HashIdPreimage — its bounds cover
+// authorization entries and transaction envelopes — so this ABI decodes it
+// with the SDK's default decoder. A bounded preimage decoder belongs in the
+// library, not here.
+//
+// decode-allow: the base64 blob is a HashIdPreimage the caller supplies, and
+// soroauth publishes no bounded decoder for that type; its bounds cover
+// authorization entries and transaction envelopes.
+//
 //export SoroauthPayload
 func SoroauthPayload(preimageB64 *C.char) *C.char {
 	var preimage xdr.HashIdPreimage
@@ -214,6 +228,16 @@ func SoroauthPayload(preimageB64 *C.char) *C.char {
 
 // SoroauthWriteSignature writes an externally produced signature ScVal (base64
 // XDR) onto every credential node whose address matches.
+//
+// The signature is caller-supplied base64 XDR, so it is untrusted input, but
+// soroauth publishes no bounded decoder for ScVal — its bounds cover
+// authorization entries and transaction envelopes — so this ABI decodes it
+// with the SDK's default decoder. A bounded ScVal decoder belongs in the
+// library, not here.
+//
+// decode-allow: the base64 blob is an ScVal signature the caller supplies, and
+// soroauth publishes no bounded decoder for that type; its bounds cover
+// authorization entries and transaction envelopes.
 //
 //export SoroauthWriteSignature
 func SoroauthWriteSignature(entryB64 *C.char, validUntilLedger C.longlong, networkPassphrase *C.char, forAddress *C.char, signatureScvalB64 *C.char) *C.char {

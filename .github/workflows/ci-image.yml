@@ -8,8 +8,10 @@
 # It builds the same Dockerfile the release publishes for linux/amd64 and
 # linux/arm64 and runs the CLI on both, so an arm64 image that builds but does
 # not execute fails here instead of on a consumer's machine. The release
-# workflow (.github/workflows/release.yml) builds, signs, attests and publishes
-# the same two platforms; this is the half that runs without a registry.
+# workflow (.github/workflows/release.yml) builds, signs and attests the image;
+# on main it publishes one architecture, so this job is the testing half that
+# proves both arches build and run before release.yml gains a platforms: input.
+# It runs without a registry.
 name: ci / image
 
 on:

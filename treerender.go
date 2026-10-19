@@ -3,6 +3,8 @@ package soroauth
 import (
 	"fmt"
 	"strings"
+
+	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
 // DelegateTreeASCII renders info's credential tree as an indented ASCII tree
@@ -101,5 +103,60 @@ func writeDOTNodes(b *strings.Builder, parentID string, nodes []NodeInfo) {
 		writeDOTNode(b, id, node.Address, node.Signed)
 		fmt.Fprintf(b, "  %s -> %s;\n", parentID, id)
 		writeDOTNodes(b, id, node.Nested)
+	}
+}
+
+// InvocationTreeASCII renders an invocation tree as an indented ASCII tree,
+// one line per invocation, naming the function and, for contract calls, the
+// contract address. The walk is bounded by MaxDecodeDepth, mirroring Inspect.
+//
+// The root invocation is always shown; each sub-invocation is indented beneath
+// its parent with the box-drawing connectors a terminal `tree` command uses.
+func InvocationTreeASCII(root xdr.SorobanAuthorizedInvocation) (string, error) {
+	var b strings.Builder
+	if err := writeInvocation(&b, root, "", true, 1); err != nil {
+		return "", err
+	}
+	return b.String(), nil
+}
+
+// writeInvocation renders one invocation and recurses into its sub-invocations.
+// depth counts the root as 1 and is capped at MaxDecodeDepth.
+func writeInvocation(b *strings.Builder, inv xdr.SorobanAuthorizedInvocation, prefix string, last bool, depth int) error {
+	if err := checkTraversalDepth(depth); err != nil {
+		return err
+	}
+	connector := "├── "
+	if last {
+		connector = "└── "
+	}
+	fmt.Fprintf(b, "%s%s%s\n", prefix, connector, invocationLabel(inv))
+	nextPrefix := prefix + "│   "
+	if last {
+		nextPrefix = prefix + "    "
+	}
+	for i := range inv.SubInvocations {
+		if err := writeInvocation(b, inv.SubInvocations[i], nextPrefix, i == len(inv.SubInvocations)-1, depth+1); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// invocationLabel names one invocation: the function, and the contract address
+// for contract calls.
+func invocationLabel(inv xdr.SorobanAuthorizedInvocation) string {
+	switch inv.Function.Type {
+	case xdr.SorobanAuthorizedFunctionTypeSorobanAuthorizedFunctionTypeContractFn:
+		if inv.Function.ContractFn == nil {
+			return "contract_fn"
+		}
+		contract, err := FormatAddress(inv.Function.ContractFn.ContractAddress)
+		if err != nil {
+			return string(inv.Function.ContractFn.FunctionName)
+		}
+		return fmt.Sprintf("%s (%s)", string(inv.Function.ContractFn.FunctionName), contract)
+	default:
+		return string(inv.Function.Type)
 	}
 }
