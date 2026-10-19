@@ -19,11 +19,42 @@ import (
 // adding a scenario id here is what makes its omission impossible.
 var requiredScenarios = []string{"A", "B", "C", "C-control", "D", "E", "F", "G", "H", "I", "J", "K"}
 
+var ranScenarios = map[string]struct{}{}
+var skippedScenarios int
+
 func TestMain(m *testing.M) {
 	code := m.Run()
+	resultsMu.Lock()
+	runCount, skipCount := len(ranScenarios), skippedScenarios
+	resultsMu.Unlock()
+	summary, passed := scenarioSummary(runCount, skipCount)
+	fmt.Fprintf(os.Stderr, "e2e scenario summary: %s\n", summary)
+	if !passed {
+		fmt.Fprintln(os.Stderr, "e2e suite skipped every scenario")
+		code = 1
+	}
 	writeResults()
 	writeParityReport()
 	os.Exit(code)
+}
+
+func skipScenariof(t *testing.T, format string, args ...any) {
+	t.Helper()
+	resultsMu.Lock()
+	skippedScenarios++
+	resultsMu.Unlock()
+	t.Skipf(format, args...)
+}
+
+func recordScenarioRun(t *testing.T) {
+	t.Helper()
+	resultsMu.Lock()
+	ranScenarios[t.Name()] = struct{}{}
+	resultsMu.Unlock()
+}
+
+func scenarioSummary(ran, skipped int) (string, bool) {
+	return fmt.Sprintf("%d ran, %d skipped", ran, skipped), ran > 0 || skipped == 0
 }
 
 // writeResults records a full run to the network's results file: RESULTS.md for

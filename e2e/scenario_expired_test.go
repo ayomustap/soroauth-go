@@ -229,7 +229,7 @@ func TestScenarioExpiredSignatureRejected(t *testing.T) {
 			// A miss is not a signature-correctness failure. Say exactly what
 			// went wrong and skip; the rejection half above still ran and
 			// recorded its evidence.
-			t.Skipf("could not submit at exactly the expiration ledger: %s; "+
+			skipScenariof(t, "could not submit at exactly the expiration ledger: %s; "+
 				"the inclusion boundary was therefore not observed in this run", lastMiss)
 		}
 	})

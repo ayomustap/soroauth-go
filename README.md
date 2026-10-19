@@ -254,12 +254,14 @@ something a script drives, so it has no `--json` mode.
 | `submit`        | `hash`, `status`, `ledger`, `arm` (plus `result_xdr` and `diagnostic_events` when the transaction failed)                                   | `error`                                             |
 | `delegates`     | `wrapped_entry`                                                                                                                             | `error`                                             |
 | `inspect`       | (the `EntryInfo` struct — this was already `inspect`'s only output; `--json` is accepted for consistency and does not change it)            | `error`                                             |
+| `diff`          | `identical`, `payload_changed`, `signatures_changed`, `stale_signatures`, `changes`, `summary`                                              | `error`                                             |
 | `verify`        | the report: `credential_type`, `address`, `valid_until_ledger`, `verified`, and `nodes` with a `verdict` per credential node                | `error`                                             |
 | `tree`          | (the `EntryInfo` struct, same shape as `inspect`; without `--json` it prints an ASCII or DOT rendering instead)                             | `error`                                             |
 | `doctor`        | `checks`, `ok`                                                                                                                              | (checks carry their own `pass`/`detail`; see below) |
 | `cross-compile` | `target`, `size`, `sha256` (one per line)                                                                                                   | `error`                                             |
 | `completions`   | `shell`, `script`                                                                                                                           | `error`                                             |
 | `man`           | `format`, `page`                                                                                                                            | `error`                                             |
+| `wasm-budget`   | `size`, `budget`, `exceeded`, and optional `previous_size` and `delta`                                                                      | `error`                                             |
 
 ### Worked invocation — JSON output
 

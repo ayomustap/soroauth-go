@@ -30,3 +30,27 @@ func TestSubmissionHeadroomRegression(t *testing.T) {
 		})
 	}
 }
+
+func TestScenarioSummary(t *testing.T) {
+	tests := []struct {
+		name    string
+		ran     int
+		skipped int
+		want    string
+		passed  bool
+	}{
+		{name: "completed and skipped scenarios", ran: 4, skipped: 1, want: "4 ran, 1 skipped", passed: true},
+		{name: "all scenarios skipped", skipped: 4, want: "0 ran, 4 skipped", passed: false},
+		{name: "no scenario selection", want: "0 ran, 0 skipped", passed: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, passed := scenarioSummary(tt.ran, tt.skipped)
+			if got != tt.want || passed != tt.passed {
+				t.Fatalf("scenarioSummary(%d, %d) = (%q, %v), want (%q, %v)",
+					tt.ran, tt.skipped, got, passed, tt.want, tt.passed)
+			}
+		})
+	}
+}

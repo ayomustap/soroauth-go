@@ -26,6 +26,15 @@ cd ../.. && go test -tags e2e -v ./e2e/...
 container, runs the identical scenarios against it, and removes the container
 afterwards even if the tests fail. It needs Docker as well as `stellar-cli`.
 
+The suite requires a reachable Soroban RPC that answers `getNetwork`,
+`getHealth` and `getLatestLedger`, plus either a reachable friendbot or an
+already-funded `SOROAUTH_FUNDER_SEED`. `make e2e` also requires `stellar-cli`
+and the Rust toolchain needed to build the fixture contracts. At the end of a
+run, the suite reports completed and skipped scenario counts. The
+exact-expiration scenario may skip only when the transaction cannot be included
+at that exact ledger; if every scenario is skipped, the test command exits
+non-zero.
+
 ## Choosing a network
 
 The suite is not compiled for one network: `SOROAUTH_RPC_URL` selects the RPC,

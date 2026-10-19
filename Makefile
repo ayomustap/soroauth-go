@@ -43,7 +43,60 @@ FUZZTIME ?= 30s
 # soak is not a replacement for it.
 SOAKTIME ?= 2m
 
-.PHONY: all help fmt vet test coverage fuzz soak build server man site md-check md-format vectors vectors-check demo-check diagrams diagrams-check e2e clean parity parity-rust differential wasm wasm-check wasm-budget ts-test jvm-test jvm-native rust-test grpc-test grpc-check freighter-check openapi-test openapi-check action-test
+.PHONY: all help check-index fmt vet test coverage fuzz soak build server man site md-check md-format vectors vectors-check demo-check diagrams diagrams-check e2e clean parity parity-rust differential wasm wasm-check wasm-budget ts-test jvm-test jvm-native rust-test grpc-test grpc-check freighter-check openapi-test openapi-check action-test
+
+define CI_CHECK_INDEX
+Required: ci / vet and test
+	gofmt -l . (must be empty); go vet ./...; go vet -tags e2e ./...
+	go run ./cmd/gencorpus
+	git diff --exit-code testdata/fuzz testdata/wasm-parity
+	go test -race -v -run TestAuthorizeEntryExpirationProperty ./...
+	go test -race ./...
+	go test -tags e2e -run TestParityReportRegression ./e2e
+	npm ci; npx prettier --check '**/*.md'
+	node docs/diagrams/render.mjs --check
+Required: ci / golden vectors are reproducible
+	cd testdata/gen && npm ci && node gen.mjs && node gen-passkey.mjs
+	node examples/browser-passkey/app.test.mjs
+	git diff --exit-code testdata/vectors testdata/frozen
+Required: ci / contracts build and test (cwd: e2e/contracts)
+	cargo test --workspace --locked
+	cargo build --release --target wasm32v1-none --workspace --locked
+Required: security / codeql and dependency review
+	CodeQL security-and-quality analysis; build command: go build ./...
+	GitHub dependency-review action; fail on high-severity advisories
+Advisory: ci / go
+	make coverage; cross-compile release targets; make fuzz; make soak
+	go test -run '^$$' -bench . -benchmem -count=1 .; scripts/checkbench
+Advisory: links / live e2e
+	go run ./scripts/docsite --out _site; lychee --offline --include-fragments
+	lychee --no-progress --verbose './**/*.md' (external links; report only)
+	make e2e (scheduled/manual; submits live network transactions)
+	make e2e-local (manual; runs against a local quickstart)
+Advisory: ci / wasm and TypeScript
+	./wasm/build.sh; node wasm/parity.mjs
+	go build -o bin/soroauth ./cmd/soroauth
+	./bin/soroauth wasm-budget --out wasm/dist/soroauth.wasm --json
+	cd wasm/ts && npm ci && npm run typecheck && npm test
+Advisory: other module workflows
+	make differential; make parity-rust; make wasm-check; make ts-test
+	make jvm-test; make rust-test; make grpc-test; make grpc-check
+	make openapi-check
+	make action-test; make freighter-check
+Advisory: ci / adapters (walletsdk, gcpkms, awskms)
+	gofmt -l .; go vet ./...; go test -race ./... (in each module)
+Advisory: ci / jvm and rust
+	make jvm-native; make rust-test
+	cargo clippy --locked --all-targets -- -D warnings; cargo fmt --check
+Advisory: ci / sdk-main and parity
+	go build ./...; go vet ./...; go test -race ./...
+	go test -run TestGoldenVectors -v .
+	make vectors-check; make parity; make parity-rust; make differential
+Advisory: ci / spellcheck and release proofs
+	npm ci; npx cspell --config cspell.json './**/*.md'
+	scripts/reproduce.sh <tag> rebuilt; compare rebuilt/checksums.txt
+	scripts/verify-release.sh --repo <repo> --dir release-assets --tamper-demo
+endef
 
 # The default target runs exactly what a pull request has to pass before the
 # golden-vector drift check, which needs Node and the network.
@@ -87,6 +140,11 @@ help:
 	@echo "  make action-test   build the CLI image and test the composite action (needs docker and jq)"
 	@echo "  make freighter-check  check the Freighter example's logic without a browser"
 	@echo "  make clean         remove $(BIN_DIR)/ and build output"
+	@$(MAKE) --no-print-directory -s check-index
+
+check-index:
+	@$(info $(CI_CHECK_INDEX))
+	@:
 
 # gofmt -l prints the files that need formatting; this target turns that output
 # into a failure, which is what CI's gofmt step does.
@@ -100,6 +158,9 @@ fmt:
 
 vet:
 	$(GO) vet ./...
+
+test:
+	$(GO) test ./...
 
 # Per-package coverage floors (testdata/coverage/floors.json). One global floor
 # let a well-covered package subsidise a thin one: the signing path was

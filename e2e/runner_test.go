@@ -119,6 +119,7 @@ type scenarioSpec struct {
 // scenarioSpec, not here.
 func runScenario(t *testing.T, h *harness, spec scenarioSpec) submission {
 	t.Helper()
+	recordScenarioRun(t)
 
 	// 1. record: the host reports which addresses must authorize the call
 	// and hands back unsigned authorization entries.
